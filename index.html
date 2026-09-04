@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Budget Ledger</title>
+    
+    <!-- React & ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel Standalone for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Source Serif 4', Georgia, serif;
+            background: #F1EDE1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        #root {
+            width: 100%;
+            max-width: 900px;
+        }
+        
+        /* Input styles */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+        
+        /* Spin animation */
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        // ---------- Constants ----------
+        const URL_KEY = "ledger-apps-script-url-v1";
+        const uid = () => Math.random().toString(36).slice(2, 10);
+        const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+        const inr = (n) => {
+            const v = Number(n) || 0;
+            return "\u20B9" + v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+        };
+
+        const currentMonthKey = () => {
+            const d = new Date();
+            return `${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
+        };
+
+        const TABS = [
+            { id: "overview", label: "Overview", icon: "BookOpen" },
+            { id: "balance", label: "Closing Balance", icon: "Wallet" },
+            { id: "wishlist", label: "Wishlist", icon: "ListChecks" },
+            { id: "savings", label: "Savings", icon: "PiggyBank" },
+        ];
+
+        const INK = "#1B2A4A";
+        const PAPER = "#F1EDE1";
+        const PAPER_DARK = "#E7E1D0";
+        const RULE = "#C7BFA8";
+        const DEBIT = "#A6392C";
+        const CREDIT = "#2E6650";
+        const TEXT = "#26241D";
+
+        // ---------- Backend Calls ----------
+        async function fetchMonth(baseUrl, monthKey) {
+            const fullUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}month=${encodeURIComponent(monthKey)}`;
+            try {
+                const res = await fetch(fullUrl, {
+                    method: "GET",
+                    headers: { "Accept": "application/json" },
+                });
+                if (!res.ok) throw new Error("Request failed: " + res.status);
+                return res.json();
+            } catch (error) {
+                console.error("Fetch error:", error);
+                throw error;
+            }
+        }
+
+        async function saveMonth(baseUrl, monthKey, data) {
+            try {
+                const res = await fetch(baseUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json;charset=utf-8",
+                        "Accept": "application/json",
+                    },
+                    body: JSON.stringify({ month: monthKey, data }),
+                });
+                if (!res.ok) throw new Error("Request failed: " + res.status);
+                return res.json();
+            } catch (error) {
+                console.error("Save error:", error);
+                throw error;
+            }
+        }
+
+        // ---------- Small Components ----------
+        function Field({ label, children }) {
+            return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontSize: 11, letterSpacing: 0.3, color: "#6B6555" }}>{label}</span>
+                    {children}
+                </div>
+            );
+        }
+
+        function NumberCell({ value, onChange, placeholder, tone }) {
+            return (
+                <input
+                    type="number"
+                    value={value === "" || value === undefined ? "" : value}
+                    placeholder={placeholder}
+                    onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+                    style={{
+                        width: "100%", background: "transparent", border: "none",
+                        borderBottom: `1px solid ${RULE}`, textAlign: "right",
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 14,
+                        color: tone || TEXT, padding: "4px 2px", outline: "none",
+                    }}
+                />
+            );
+        }
+
+        function TextCell({ value, onChange, placeholder, align }) {
+            return (
+                <input
+                    type="text"
+                    value={value}
+                    placeholder={placeholder}
+                    onChange={(e) => onChange(e.target.value)}
+                    style={{
+                        width: "100%", background: "transparent", border: "none",
+                        borderBottom: `1px solid ${RULE}`, textAlign: align || "left",
+                        fontSize: 14, color: TEXT, padding: "4px 2px", outline: "none",
+                    }}
+                />
+            );
+        }
+
+        function RowShell({ children, onRemove }) {
+            return (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 28px", gap: 10, alignItems: "center", padding: "6px 0" }}>
+                    {children}
+                    <button onClick={onRemove} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282", padding: 4 }} aria-label="Remove row">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    </button>
+                </div>
+            );
+        }
+
+        function SectionTotal({ label, value, tone }) {
+            return (
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 4px", borderTop: `2px solid ${INK}`, marginTop: 4 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>{label}</span>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 15, color: tone || TEXT }}>{inr(value)}</span>
+                </div>
+            );
+        }
+
+        function AddButton({ onClick, children }) {
+            return (
+                <button
+                    onClick={onClick}
+                    style={{
+                        display: "flex", alignItems: "center", gap: 6, marginTop: 10,
+                        background: "none", border: `1px dashed ${RULE}`, borderRadius: 3,
+                        padding: "6px 10px", fontSize: 12.5, color: INK, cursor: "pointer",
+                    }}
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                    {children}
+                </button>
+            );
+        }
+
+        function NumberCellStandalone({ value, onChange }) {
+            return (
+                <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 4 }}>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 20 }}>{"\u20B9"}</span>
+                    <input
+                        type="number"
+                        value={value}
+                        onChange={(e) => onChange(Number(e.target.value) || 0)}
+                        style={{
+                            fontSize: 20, fontWeight: 700, border: "none", background: "transparent",
+                            borderBottom: `1px solid ${RULE}`, fontFamily: "'IBM Plex Mono', monospace",
+                            color: INK, outline: "none", width: 140,
+                        }}
+                    />
+                </div>
+            );
+        }
+
+        // ---------- Icon Helper ----------
+        function IconComponent({ name, size = 14, className = "" }) {
+            const icons = {
+                BookOpen: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
+                Wallet: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>,
+                ListChecks: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>,
+                PiggyBank: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.5 0 3 1.1 4.1C5.3 17 5 19.5 5 20c0 .5.5 1 1 1h4c.5 0 1-.5 1-1v-1.5h2V20c0 .5.5 1 1 1h4c.5 0 1-.5 1-1 0-.5-.3-3-.1-4.1C21.3 15 22 13.5 22 12c0-1.8-1.4-3-2.5-3.5C19.8 7.5 20 6 20 5c0-.5-.5-1-1-1z"/><circle cx="8" cy="11" r="1"/><circle cx="16" cy="11" r="1"/></svg>,
+                Settings: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>,
+                RefreshCw: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
+                Check: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>,
+                CloudOff: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/><path d="m22 2-8 8"/><path d="m16 10 6-6"/></svg>,
+                ChevronDown: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>,
+                AlertTriangle: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>,
+                IndianRupee: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12"/><path d="M6 8h12"/><path d="m6 13 8.5 8"/><path d="M6 13h9"/><path d="M18 13h3"/></svg>,
+            };
+            return icons[name] || null;
+        }
+
+        // ---------- Main App ----------
+        function BudgetLedger() {
+            const [url, setUrl] = useState(null);
+            const [urlDraft, setUrlDraft] = useState("");
+            const [checkingUrl, setCheckingUrl] = useState(false);
+            const [urlError, setUrlError] = useState("");
+            const [showSettings, setShowSettings] = useState(false);
+
+            const [monthKey, setMonthKey] = useState(currentMonthKey());
+            const [months, setMonths] = useState([]);
+            const [data, setData] = useState(null);
+            const [tab, setTab] = useState("overview");
+            const [status, setStatus] = useState("idle");
+            const [showMonthPicker, setShowMonthPicker] = useState(false);
+
+            const saveTimer = useRef(null);
+            const skipNextSave = useRef(false);
+
+            // Load saved URL
+            useEffect(() => {
+                const savedUrl = localStorage.getItem(URL_KEY);
+                if (savedUrl) {
+                    setUrl(savedUrl);
+                    setUrlDraft(savedUrl);
+                }
+            }, []);
+
+            // Load month data
+            const loadMonth = useCallback(async (baseUrl, mk) => {
+                setStatus("loading");
+                try {
+                    const json = await fetchMonth(baseUrl, mk);
+                    skipNextSave.current = true;
+                    setData(json.data);
+                    setMonths(json.months || []);
+                    setStatus("synced");
+                    setUrlError("");
+                } catch (err) {
+                    console.error("Load error:", err);
+                    setStatus("offline");
+                    setUrlError("Couldn't reach the Sheet. Please check your connection.");
+                }
+            }, []);
+
+            useEffect(() => {
+                if (url) {
+                    loadMonth(url, monthKey);
+                }
+            }, [url, monthKey, loadMonth]);
+
+            // Debounced save
+            useEffect(() => {
+                if (!url || !data) return;
+                if (skipNextSave.current) {
+                    skipNextSave.current = false;
+                    return;
+                }
+
+                setStatus("syncing");
+                if (saveTimer.current) clearTimeout(saveTimer.current);
+
+                saveTimer.current = setTimeout(async () => {
+                    try {
+                        const json = await saveMonth(url, monthKey, data);
+                        setMonths(json.months || months);
+                        setStatus("synced");
+                        setUrlError("");
+                    } catch (err) {
+                        console.error("Save error:", err);
+                        setStatus("error");
+                        setUrlError("Failed to save. Please try again.");
+                    }
+                }, 700);
+
+                return () => clearTimeout(saveTimer.current);
+            }, [data, url, monthKey, months]);
+
+            const connect = async () => {
+                const candidate = urlDraft.trim();
+                if (!candidate) return;
+
+                setCheckingUrl(true);
+                setUrlError("");
+
+                try {
+                    await fetchMonth(candidate, currentMonthKey());
+                    localStorage.setItem(URL_KEY, candidate);
+                    setUrl(candidate);
+                    setShowSettings(false);
+                    setUrlError("");
+                } catch (err) {
+                    console.error("Connection error:", err);
+                    setUrlError("Couldn't reach that URL. Check it's deployed as 'Anyone' and ends in /exec.");
+                } finally {
+                    setCheckingUrl(false);
+                }
+            };
+
+            const disconnect = () => {
+                localStorage.removeItem(URL_KEY);
+                setUrl(null);
+                setData(null);
+                setShowSettings(false);
+                setUrlError("");
+            };
+
+            // ---- setup screen ----
+            if (!url) {
+                return (
+                    <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", background: PAPER, border: `1px solid ${RULE}`, borderRadius: 2, padding: 32, color: TEXT, minHeight: 420 }}>
+                        <div style={{ fontSize: 11, letterSpacing: 1.5, color: "#6B6555" }}>Rehman &middot; Personal Ledger</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>Connect to Google Sheets</div>
+                        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "#4A4636", maxWidth: 480, marginTop: 12 }}>
+                            Paste the Web App URL from your Apps Script deployment (ends in <code>/exec</code>). Once connected,
+                            every change here saves straight to your Google Sheet, and a new month's sheet appears automatically
+                            with the opening balance carried over from last month's closing balance.
+                        </p>
+                        <div style={{ marginTop: 20, display: "flex", gap: 8, maxWidth: 520 }}>
+                            <input
+                                type="text"
+                                value={urlDraft}
+                                onChange={(e) => setUrlDraft(e.target.value)}
+                                placeholder="https://script.google.com/macros/s/XXXX/exec"
+                                style={{
+                                    flex: 1, padding: "10px 12px", fontSize: 13, fontFamily: "'IBM Plex Mono', monospace",
+                                    border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none",
+                                }}
+                            />
+                            <button
+                                onClick={connect}
+                                disabled={checkingUrl}
+                                style={{ padding: "10px 18px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                            >
+                                {checkingUrl ? "Connecting…" : "Connect"}
+                            </button>
+                        </div>
+                        {urlError && <div style={{ marginTop: 10, fontSize: 12.5, color: DEBIT }}>{urlError}</div>}
+                        <div style={{ marginTop: 24, fontSize: 12, color: "#8A8470" }}>
+                            Don't have the URL yet? Deploy the Code.gs backend first — see the deployment steps in chat.
+                        </div>
+                    </div>
+                );
+            }
+
+            if (!data) {
+                return (
+                    <div style={{ padding: 40, fontFamily: "'Source Serif 4', serif", color: TEXT, background: PAPER, border: `1px solid ${RULE}` }}>
+                        {status === "offline" ? "Couldn't reach the Sheet — check your connection." : "Opening the ledger…"}
+                    </div>
+                );
+            }
+
+            const sum = (arr, key) => arr.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+            const totalFixed = sum(data.fixed, "amount");
+            const totalVariable = sum(data.variable, "amount");
+            const totalOutgo = totalFixed + totalVariable;
+            const surplus = data.salary - totalOutgo;
+            const totalAlready = sum(data.alreadyDeducted, "amount");
+
+            let running = Number(data.openingBalance) || 0;
+            const expenseRows = data.expenses.map((e) => {
+                const used = e.actual === "" || e.actual === undefined ? Number(e.planned) || 0 : Number(e.actual) || 0;
+                running -= used;
+                return { ...e, used, balanceAfter: running };
+            });
+            const closingBalance = running;
+            const buffer = closingBalance - (Number(data.minBalance) || 0);
+
+            const wishlistTotalNeeded = data.wishlist.reduce((s, w) => {
+                const cost = Number(w.cost) || 0;
+                const saved = Number(w.saved) || 0;
+                return s + Math.max(cost - saved, 0);
+            }, 0);
+
+            const update = (patch) => setData((d) => ({ ...d, ...patch }));
+            const updateRow = (listKey, id, patch) =>
+                update({ [listKey]: data[listKey].map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+            const removeRow = (listKey, id) => update({ [listKey]: data[listKey].filter((r) => r.id !== id) });
+            const addRow = (listKey, row) => update({ [listKey]: [...data[listKey], { id: uid(), ...row }] });
+
+            const monthOptions = Array.from(new Set([...(months || []), currentMonthKey()])).sort((a, b) => {
+                const [ma, ya] = a.split("-");
+                const [mb, yb] = b.split("-");
+                return new Date(+ya, MONTHS.indexOf(ma), 1) - new Date(+yb, MONTHS.indexOf(mb), 1);
+            });
+
+            const statusLabel = {
+                loading: "loading…",
+                syncing: "saving…",
+                synced: "synced to Sheet",
+                offline: "offline — retry",
+                error: "save failed — retry",
+                idle: "",
+            }[status];
+
+            return (
+                <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", color: TEXT, background: PAPER, minHeight: 560, borderRadius: 2, overflow: "hidden", border: `1px solid ${RULE}` }}>
+                    {/* Cover band */}
+                    <div style={{ background: INK, color: PAPER, padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                        <div>
+                            <div style={{ fontSize: 11, letterSpacing: 1.5, opacity: 0.65 }}>Rehman &middot; Personal Ledger</div>
+                            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>Monthly Budget</div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                            {/* month picker */}
+                            <div style={{ position: "relative" }}>
+                                <button
+                                    onClick={() => setShowMonthPicker((s) => !s)}
+                                    style={{ display: "flex", alignItems: "center", gap: 5, background: "rgba(241,237,225,0.1)", border: `1px solid rgba(241,237,225,0.3)`, borderRadius: 3, color: PAPER, fontSize: 12.5, padding: "6px 10px", cursor: "pointer" }}
+                                >
+                                    {monthKey} <IconComponent name="ChevronDown" size={12} />
+                                </button>
+                                {showMonthPicker && (
+                                    <div style={{ position: "absolute", right: 0, top: "110%", background: PAPER, border: `1px solid ${RULE}`, borderRadius: 3, minWidth: 120, zIndex: 10, boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+                                        {monthOptions.map((mk) => (
+                                            <button
+                                                key={mk}
+                                                onClick={() => { setMonthKey(mk);
+                                                    setShowMonthPicker(false); }}
+                                                style={{
+                                                    display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%",
+                                                    textAlign: "left", padding: "7px 12px", fontSize: 12.5, border: "none",
+                                                    background: mk === monthKey ? PAPER_DARK : "transparent", color: TEXT, cursor: "pointer",
+                                                }}
+                                            >
+                                                {mk} {mk === currentMonthKey() && <span style={{ fontSize: 10, color: "#8A8470" }}>current</span>}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            <div style={{ fontSize: 11, opacity: 0.75, fontFamily: "'IBM Plex Mono', monospace", display: "flex", alignItems: "center", gap: 4 }}>
+                                {status === "syncing" && <span className="spin"><IconComponent name="RefreshCw" size={11} /></span>}
+                                {status === "synced" && <IconComponent name="Check" size={11} />}
+                                {(status === "offline" || status === "error") && <IconComponent name="CloudOff" size={11} />}
+                                {statusLabel}
+                            </div>
+                            <button onClick={() => { setUrlDraft(url);
+                                setShowSettings(true); }} style={{ background: "none", border: "none", color: PAPER, opacity: 0.7, cursor: "pointer", padding: 4 }} aria-label="Settings">
+                                <IconComponent name="Settings" size={15} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {showSettings && (
+                        <div style={{ padding: "14px 22px", background: PAPER_DARK, borderBottom: `1px solid ${RULE}`, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <input
+                                type="text"
+                                value={urlDraft}
+                                onChange={(e) => setUrlDraft(e.target.value)}
+                                style={{ flex: 1, minWidth: 220, padding: "7px 10px", fontSize: 12.5, fontFamily: "'IBM Plex Mono', monospace", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff" }}
+                            />
+                            <button onClick={connect} style={{ padding: "7px 14px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Save URL</button>
+                            <button onClick={disconnect} style={{ padding: "7px 14px", background: "none", color: DEBIT, border: `1px solid ${DEBIT}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Disconnect</button>
+                            <button onClick={() => setShowSettings(false)} style={{ padding: "7px 14px", background: "none", color: TEXT, border: `1px solid ${RULE}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Close</button>
+                        </div>
+                    )}
+
+                    {/* Tabs */}
+                    <div style={{ display: "flex", background: PAPER_DARK, borderBottom: `2px solid ${INK}` }}>
+                        {TABS.map((t) => {
+                            const active = tab === t.id;
+                            return (
+                                <button
+                                    key={t.id}
+                                    onClick={() => setTab(t.id)}
+                                    style={{
+                                        display: "flex", alignItems: "center", gap: 6, flex: 1, justifyContent: "center",
+                                        padding: "10px 6px", cursor: "pointer", border: "none", borderRight: `1px solid ${RULE}`,
+                                        background: active ? PAPER : "transparent", color: active ? INK : "#7A7460",
+                                        fontWeight: active ? 700 : 400, fontSize: 13,
+                                        borderBottom: active ? `2px solid ${DEBIT}` : "2px solid transparent", marginBottom: -2,
+                                    }}
+                                >
+                                    <IconComponent name={t.icon} size={14} /> {t.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <div style={{ padding: "20px 24px 28px" }}>
+                        {tab === "overview" && (
+                            <div>
+                                <Field label="MONTHLY SALARY (IN-HAND)">
+                                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 4 }}>
+                                        <IconComponent name="IndianRupee" size={18} />
+                                        <input
+                                            type="number"
+                                            value={data.salary}
+                                            onChange={(e) => update({ salary: Number(e.target.value) || 0 })}
+                                            style={{ fontSize: 26, fontWeight: 700, border: "none", background: "transparent", fontFamily: "'IBM Plex Mono', monospace", color: INK, outline: "none", width: 200 }}
+                                        />
+                                    </div>
+                                </Field>
+
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28, marginTop: 24 }}>
+                                    <div>
+                                        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Fixed commitments</div>
+                                        {data.fixed.map((r) => (
+                                            <RowShell key={r.id} onRemove={() => removeRow("fixed", r.id)}>
+                                                <TextCell value={r.name} onChange={(v) => updateRow("fixed", r.id, { name: v })} />
+                                                <NumberCell value={r.amount} onChange={(v) => updateRow("fixed", r.id, { amount: v })} tone={DEBIT} />
+                                            </RowShell>
+                                        ))}
+                                        <AddButton onClick={() => addRow("fixed", { name: "New item", amount: 0 })}>Add fixed item</AddButton>
+                                        <SectionTotal label="Total fixed" value={totalFixed} tone={DEBIT} />
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Variable / household</div>
+                                        {data.variable.map((r) => (
+                                            <RowShell key={r.id} onRemove={() => removeRow("variable", r.id)}>
+                                                <TextCell value={r.name} onChange={(v) => updateRow("variable", r.id, { name: v })} />
+                                                <NumberCell value={r.amount} onChange={(v) => updateRow("variable", r.id, { amount: v })} tone={DEBIT} />
+                                            </RowShell>
+                                        ))}
+                                        <AddButton onClick={() => addRow("variable", { name: "New item", amount: 0 })}>Add variable item</AddButton>
+                                        <SectionTotal label="Total variable" value={totalVariable} tone={DEBIT} />
+                                    </div>
+                                </div>
+
+                                <div style={{ marginTop: 26, padding: "16px 20px", background: PAPER_DARK, borderRadius: 3, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <div>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Total outgo {inr(totalOutgo)} &middot; Salary {inr(data.salary)}</div>
+                                        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>Monthly surplus</div>
+                                    </div>
+                                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 24, fontWeight: 700, color: surplus >= 0 ? CREDIT : DEBIT }}>
+                                        {inr(surplus)}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {tab === "balance" && (
+                            <div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                                    <Field label="BANK BALANCE — OPENING THIS MONTH">
+                                        <NumberCellStandalone value={data.openingBalance} onChange={(v) => update({ openingBalance: v })} />
+                                    </Field>
+                                    <Field label="MINIMUM BALANCE TO KEEP">
+                                        <NumberCellStandalone value={data.minBalance} onChange={(v) => update({ minBalance: v })} />
+                                    </Field>
+                                </div>
+
+                                {data.alreadyDeducted && data.alreadyDeducted.length > 0 && (
+                                    <div style={{ marginTop: 20, fontSize: 12, color: "#6B6555", fontStyle: "italic" }}>
+                                        Already deducted this month (reference only, already inside the balance above): {" "}
+                                        {data.alreadyDeducted.map((a) => a.name).join(", ")} = {inr(totalAlready)}
+                                    </div>
+                                )}
+
+                                <div style={{ marginTop: 20 }}>
+                                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Upcoming expenses before next salary</div>
+                                    <div style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                        <span>Date</span><span>Item</span><span style={{ textAlign: "right" }}>Planned</span><span style={{ textAlign: "right" }}>Actual</span><span style={{ textAlign: "right" }}>Balance</span><span />
+                                    </div>
+                                    {expenseRows.map((e) => (
+                                        <div key={e.id} style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
+                                            <TextCell value={e.date} onChange={(v) => updateRow("expenses", e.id, { date: v })} />
+                                            <TextCell value={e.name} onChange={(v) => updateRow("expenses", e.id, { name: v })} />
+                                            <NumberCell value={e.planned} onChange={(v) => updateRow("expenses", e.id, { planned: v })} />
+                                            <NumberCell value={e.actual} placeholder="—" onChange={(v) => updateRow("expenses", e.id, { actual: v })} tone={DEBIT} />
+                                            <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>{inr(e.balanceAfter)}</span>
+                                            <button onClick={() => removeRow("expenses", e.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <AddButton onClick={() => addRow("expenses", { date: "", name: "New expense", planned: 0, actual: "" })}>Add expense</AddButton>
+                                </div>
+
+                                <div style={{ marginTop: 22, display: "flex", gap: 16 }}>
+                                    <div style={{ flex: 1, padding: "14px 18px", background: PAPER_DARK, borderRadius: 3 }}>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Projected closing balance</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, marginTop: 2 }}>{inr(closingBalance)}</div>
+                                        <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>This becomes next month's opening balance automatically.</div>
+                                    </div>
+                                    <div style={{ flex: 1, padding: "14px 18px", background: buffer < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2 }}>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Buffer above minimum</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: buffer < 0 ? DEBIT : CREDIT }}>{inr(buffer)}</div>
+                                        {buffer < 0 && (
+                                            <div style={{ display: "flex", gap: 5, alignItems: "center", fontSize: 11, color: DEBIT, marginTop: 2 }}>
+                                                <IconComponent name="AlertTriangle" size={12} /> below minimum — hold off on wishlist / CC spend
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {tab === "wishlist" && (
+                            <div>
+                                <div style={{ fontSize: 12, color: "#6B6555", marginBottom: 14 }}>
+                                    Monthly surplus available: <strong style={{ color: CREDIT }}>{inr(surplus)}</strong> — health items are worth funding first.
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                    <span>Item</span><span style={{ textAlign: "right" }}>Cost</span><span>Priority</span><span style={{ textAlign: "right" }}>Saved</span><span style={{ textAlign: "right" }}>Needed</span><span />
+                                </div>
+                                {data.wishlist.map((w) => {
+                                    const needed = Math.max((Number(w.cost) || 0) - (Number(w.saved) || 0), 0);
+                                    return (
+                                        <div key={w.id} style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
+                                            <TextCell value={w.name} onChange={(v) => updateRow("wishlist", w.id, { name: v })} />
+                                            <NumberCell value={w.cost} placeholder="—" onChange={(v) => updateRow("wishlist", w.id, { cost: v })} />
+                                            <select
+                                                value={w.priority}
+                                                onChange={(e) => updateRow("wishlist", w.id, { priority: e.target.value })}
+                                                style={{ background: "transparent", border: "none", borderBottom: `1px solid ${RULE}`, fontSize: 13, padding: "4px 0", color: w.priority === "High" ? DEBIT : TEXT }}
+                                            >
+                                                <option>High</option>
+                                                <option>Medium</option>
+                                                <option>Low</option>
+                                            </select>
+                                            <NumberCell value={w.saved} onChange={(v) => updateRow("wishlist", w.id, { saved: v })} />
+                                            <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: DEBIT }}>{inr(needed)}</span>
+                                            <button onClick={() => removeRow("wishlist", w.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                                <AddButton onClick={() => addRow("wishlist", { name: "New item", cost: "", priority: "Medium", saved: 0 })}>Add wishlist item</AddButton>
+                                <SectionTotal label="Total still needed" value={wishlistTotalNeeded} tone={DEBIT} />
+                                {surplus > 0 && wishlistTotalNeeded > 0 && (
+                                    <div style={{ marginTop: 8, fontSize: 12, color: "#6B6555" }}>
+                                        At the full surplus, that's about {Math.ceil(wishlistTotalNeeded / surplus)} month(s) to save it all.
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {tab === "savings" && (
+                            <div>
+                                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Long-term savings (from Fixed commitments)</div>
+                                {data.fixed.filter((r) => /sip|lic/i.test(r.name)).map((r) => (
+                                    <div key={r.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
+                                        <span>{r.name}</span>
+                                        <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{inr(r.amount)} / month</span>
+                                    </div>
+                                ))}
+                                <SectionTotal
+                                    label="Total long-term savings"
+                                    value={sum(data.fixed.filter((r) => /sip|lic/i.test(r.name)), "amount")}
+                                    tone={CREDIT}
+                                />
+                                <div style={{ marginTop: 6, fontSize: 12, color: "#6B6555" }}>
+                                    {((sum(data.fixed.filter((r) => /sip|lic/i.test(r.name)), "amount") / (data.salary || 1)) * 100).toFixed(1)}% of salary
+                                </div>
+
+                                <div style={{ marginTop: 24, padding: "14px 18px", background: PAPER_DARK, borderRadius: 3, fontSize: 12.5, lineHeight: 1.6 }}>
+                                    <strong>For reference (not personalised advice):</strong>
+                                    <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+                                        <li>~20% of take-home toward savings/investing is a commonly cited starting point — you're already close to that.</li>
+                                        <li>A 3–6 month emergency fund in a liquid account is usually recommended before increasing SIP further.</li>
+                                        <li>Once the Scooty EMI ends, that {inr(4652)}/month frees up automatically.</li>
+                                        <li>For fund selection or LIC specifics, a SEBI-registered adviser or your LIC agent can tailor this to you.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Render
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<BudgetLedger />);
+    </script>
+</body>
+</html>
