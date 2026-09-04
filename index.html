@@ -171,7 +171,7 @@
                     cache: "no-store",
                     headers: { "Accept": "application/json" },
                 });
-                if (!res.ok) throw new Error("Request failed: " + res.status);
+                if (!res.ok) throw new Error("HTTP " + res.status + (res.statusText ? " " + res.statusText : ""));
                 return res.json();
             } catch (error) {
                 console.error("Fetch error:", error);
@@ -185,12 +185,14 @@
                     method: "POST",
                     cache: "no-store",
                     headers: {
-                        "Content-Type": "application/json;charset=utf-8",
+                        // text/plain keeps this a simple CORS request (no preflight/OPTIONS).
+                        // Apps Script reads the raw body via e.postData.contents either way.
+                        "Content-Type": "text/plain;charset=utf-8",
                         "Accept": "application/json",
                     },
                     body: JSON.stringify({ month: monthKey, data }),
                 });
-                if (!res.ok) throw new Error("Request failed: " + res.status);
+                if (!res.ok) throw new Error("HTTP " + res.status + (res.statusText ? " " + res.statusText : ""));
                 return res.json();
             } catch (error) {
                 console.error("Save error:", error);
@@ -376,7 +378,7 @@
                 } catch (err) {
                     console.error("Load error:", err);
                     setStatus("offline");
-                    setUrlError("Couldn't reach the Sheet. Please check your connection.");
+                    setUrlError("Couldn't reach the Sheet: " + (err && err.message ? err.message : "check connection"));
                 }
             }, []);
 
@@ -386,7 +388,10 @@
                 }
             }, [url, monthKey, loadMonth]);
 
-            // Debounced save
+            // Debounced save. NOTE: `months` must NOT be a dependency here — after a
+            // successful save setMonths() returns a fresh array, which used to re-trigger
+            // this effect → endless save loop → the sheet was rebuilt every second until
+            // Apps Script quota ran out and every save started failing.
             useEffect(() => {
                 if (!url || !data) return;
                 if (skipNextSave.current) {
@@ -400,18 +405,18 @@
                 saveTimer.current = setTimeout(async () => {
                     try {
                         const json = await saveMonth(url, monthKey, data);
-                        setMonths(json.months || months);
+                        setMonths((prev) => (json.months && json.months.length ? json.months : prev));
                         setStatus("synced");
                         setUrlError("");
                     } catch (err) {
                         console.error("Save error:", err);
                         setStatus("error");
-                        setUrlError("Failed to save. Please try again.");
+                        setUrlError("Save failed: " + (err && err.message ? err.message : "unknown error"));
                     }
                 }, 700);
 
                 return () => clearTimeout(saveTimer.current);
-            }, [data, url, monthKey, months]);
+            }, [data, url, monthKey]);
 
             const connect = async () => {
                 const candidate = urlDraft.trim();
@@ -428,7 +433,7 @@
                     setUrlError("");
                 } catch (err) {
                     console.error("Connection error:", err);
-                    setUrlError("Couldn't reach that URL. Check it's deployed as 'Anyone' and ends in /exec.");
+                    setUrlError("Couldn't reach that URL (" + (err && err.message ? err.message : "no response") + "). Check it's deployed as 'Anyone' and ends in /exec.");
                 } finally {
                     setCheckingUrl(false);
                 }
@@ -628,6 +633,12 @@
                             );
                         })}
                     </div>
+
+                    {urlError && (
+                        <div style={{ padding: "10px 24px", background: "#F3DAD5", color: DEBIT, fontSize: 12.5, borderBottom: `1px solid ${RULE}` }}>
+                            ⚠ {urlError}
+                        </div>
+                    )}
 
                     <div className="content" style={{ padding: "20px 24px 28px" }}>
                         {tab === "overview" && (
