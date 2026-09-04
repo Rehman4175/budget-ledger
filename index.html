@@ -57,6 +57,27 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* ---------- Mobile / phone view ---------- */
+        @media (max-width: 640px) {
+            html, body { overflow-x: hidden; }
+            body { padding: 8px; align-items: flex-start; }
+            #root { max-width: 100%; }
+            .cover { flex-wrap: wrap; gap: 10px; padding: 14px 16px !important; }
+            .cover-controls { flex-wrap: wrap; gap: 8px !important; }
+            .tabbar { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .tabbar button { flex: 0 0 auto !important; padding: 10px 12px !important; white-space: nowrap; }
+            .content { padding: 14px 14px 24px !important; }
+            .two-col { grid-template-columns: 1fr !important; gap: 14px !important; }
+            .cards-row { flex-direction: column !important; }
+            .surplus-bar { flex-direction: column !important; align-items: flex-start !important; gap: 8px !important; }
+            .connect-row { flex-wrap: wrap; }
+            .connect-row button { flex: 1; }
+            .expense-grid { grid-template-columns: 48px 1fr 42px 42px 64px 22px !important; gap: 4px !important; }
+            .misc-grid { grid-template-columns: 62px 1fr 56px 70px 22px !important; gap: 4px !important; }
+            .notes-grid { grid-template-columns: 70px 1fr 22px !important; gap: 6px !important; }
+            .wishlist-grid { grid-template-columns: 1fr 46px 56px 46px 58px 22px !important; gap: 4px !important; }
+        }
     </style>
 </head>
 <body>
@@ -147,6 +168,7 @@
             try {
                 const res = await fetch(fullUrl, {
                     method: "GET",
+                    cache: "no-store",
                     headers: { "Accept": "application/json" },
                 });
                 if (!res.ok) throw new Error("Request failed: " + res.status);
@@ -161,6 +183,7 @@
             try {
                 const res = await fetch(baseUrl, {
                     method: "POST",
+                    cache: "no-store",
                     headers: {
                         "Content-Type": "application/json;charset=utf-8",
                         "Accept": "application/json",
@@ -430,7 +453,7 @@
                             every change here saves straight to your Google Sheet, and a new month's sheet appears automatically
                             with the opening balance carried over from last month's closing balance.
                         </p>
-                        <div style={{ marginTop: 20, display: "flex", gap: 8, maxWidth: 520 }}>
+                        <div className="connect-row" style={{ marginTop: 20, display: "flex", gap: 8, maxWidth: 520 }}>
                             <input
                                 type="text"
                                 value={urlDraft}
@@ -519,14 +542,14 @@
             }[status];
 
             return (
-                <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", color: TEXT, background: PAPER, minHeight: 560, borderRadius: 2, overflow: "hidden", border: `1px solid ${RULE}` }}>
+                <div className="ledger" style={{ fontFamily: "'Source Serif 4', Georgia, serif", color: TEXT, background: PAPER, minHeight: 560, borderRadius: 2, overflow: "hidden", border: `1px solid ${RULE}` }}>
                     {/* Cover band */}
-                    <div style={{ background: INK, color: PAPER, padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                    <div className="cover" style={{ background: INK, color: PAPER, padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
                         <div>
                             <div style={{ fontSize: 11, letterSpacing: 1.5, opacity: 0.65 }}>Rehman &middot; Personal Ledger</div>
                             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>Monthly Budget</div>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                        <div className="cover-controls" style={{ display: "flex", alignItems: "center", gap: 14 }}>
                             {/* month picker */}
                             <div style={{ position: "relative" }}>
                                 <button
@@ -564,6 +587,9 @@
                                 setShowSettings(true); }} style={{ background: "none", border: "none", color: PAPER, opacity: 0.7, cursor: "pointer", padding: 4 }} aria-label="Settings">
                                 <IconComponent name="Settings" size={15} />
                             </button>
+                            <button onClick={() => loadMonth(url, monthKey)} style={{ background: "none", border: "none", color: PAPER, opacity: 0.7, cursor: "pointer", padding: 4 }} aria-label="Refresh from Sheet">
+                                <IconComponent name="RefreshCw" size={15} />
+                            </button>
                         </div>
                     </div>
 
@@ -582,7 +608,7 @@
                     )}
 
                     {/* Tabs */}
-                    <div style={{ display: "flex", background: PAPER_DARK, borderBottom: `2px solid ${INK}` }}>
+                    <div className="tabbar" style={{ display: "flex", background: PAPER_DARK, borderBottom: `2px solid ${INK}` }}>
                         {TABS.map((t) => {
                             const active = tab === t.id;
                             return (
@@ -603,7 +629,7 @@
                         })}
                     </div>
 
-                    <div style={{ padding: "20px 24px 28px" }}>
+                    <div className="content" style={{ padding: "20px 24px 28px" }}>
                         {tab === "overview" && (
                             <div>
                                 <Field label="MONTHLY SALARY (IN-HAND)">
@@ -618,7 +644,7 @@
                                     </div>
                                 </Field>
 
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28, marginTop: 24 }}>
+                                <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28, marginTop: 24 }}>
                                     <div>
                                         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Fixed commitments</div>
                                         {data.fixed.map((r) => (
@@ -643,7 +669,7 @@
                                     </div>
                                 </div>
 
-                                <div style={{ marginTop: 26, padding: "16px 20px", background: PAPER_DARK, borderRadius: 3, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <div className="surplus-bar" style={{ marginTop: 26, padding: "16px 20px", background: PAPER_DARK, borderRadius: 3, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                     <div>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Total outgo {inr(totalOutgo)} &middot; Salary {inr(data.salary)}</div>
                                         <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>Monthly surplus</div>
@@ -657,7 +683,7 @@
 
                         {tab === "balance" && (
                             <div>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                                <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
                                     <Field label="BANK BALANCE — OPENING THIS MONTH">
                                         <NumberCellStandalone value={data.openingBalance} onChange={(v) => update({ openingBalance: v })} />
                                     </Field>
@@ -675,11 +701,11 @@
 
                                 <div style={{ marginTop: 20 }}>
                                     <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Upcoming expenses before next salary</div>
-                                    <div style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                    <div className="expense-grid" style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
                                         <span>Date</span><span>Item</span><span style={{ textAlign: "right" }}>Planned</span><span style={{ textAlign: "right" }}>Actual</span><span style={{ textAlign: "right" }}>Balance</span><span />
                                     </div>
                                     {expenseRows.map((e) => (
-                                        <div key={e.id} style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
+                                        <div key={e.id} className="expense-grid" style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
                                             <TextCell value={e.date} onChange={(v) => updateRow("expenses", e.id, { date: v })} />
                                             <TextCell value={e.name} onChange={(v) => updateRow("expenses", e.id, { name: v })} />
                                             <NumberCell value={e.planned} onChange={(v) => updateRow("expenses", e.id, { planned: v })} />
@@ -693,7 +719,7 @@
                                     <AddButton onClick={() => addRow("expenses", { date: "", name: "New expense", planned: 0, actual: "" })}>Add expense</AddButton>
                                 </div>
 
-                                <div style={{ marginTop: 22, display: "flex", gap: 16 }}>
+                                <div className="cards-row" style={{ marginTop: 22, display: "flex", gap: 16 }}>
                                     <div style={{ flex: 1, padding: "14px 18px", background: PAPER_DARK, borderRadius: 3 }}>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Projected closing balance (actual)</div>
                                         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : TEXT }}>{inr(actualBalance)}</div>
@@ -721,13 +747,13 @@
                                 <div style={{ fontSize: 12, color: "#6B6555", marginBottom: 14 }}>
                                     Monthly surplus available: <strong style={{ color: CREDIT }}>{inr(surplus)}</strong> — health items are worth funding first.
                                 </div>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                <div className="wishlist-grid" style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
                                     <span>Item</span><span style={{ textAlign: "right" }}>Cost</span><span>Priority</span><span style={{ textAlign: "right" }}>Saved</span><span style={{ textAlign: "right" }}>Needed</span><span />
                                 </div>
                                 {data.wishlist.map((w) => {
                                     const needed = Math.max((Number(w.cost) || 0) - (Number(w.saved) || 0), 0);
                                     return (
-                                        <div key={w.id} style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
+                                        <div key={w.id} className="wishlist-grid" style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
                                             <TextCell value={w.name} onChange={(v) => updateRow("wishlist", w.id, { name: v })} />
                                             <NumberCell value={w.cost} placeholder="—" onChange={(v) => updateRow("wishlist", w.id, { cost: v })} />
                                             <select
@@ -771,12 +797,12 @@
                                         each entry instantly reduces your balance. Date khud today's date me bhar jati hai.
                                     </div>
                                 ) : (
-                                    <div style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                    <div className="misc-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
                                         <span>Date</span><span>What</span><span style={{ textAlign: "right" }}>Amount</span><span style={{ textAlign: "right" }}>Balance After</span><span />
                                     </div>
                                 )}
                                 {miscRows.map((m) => (
-                                    <div key={m.id} style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
+                                    <div key={m.id} className="misc-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
                                         <DateInput value={m.date} onChange={(v) => updateRow("misc", m.id, { date: v })} />
                                         <TextCell value={m.name} onChange={(v) => updateRow("misc", m.id, { name: v })} placeholder="kya kharcha hua?" />
                                         <NumberCell value={m.amount} placeholder="0" onChange={(v) => updateRow("misc", m.id, { amount: v })} tone={DEBIT} />
@@ -789,7 +815,7 @@
                                 <AddButton onClick={() => addRow("misc", { date: todayText(), name: "", amount: "" })}>Add spend</AddButton>
                                 {totalMisc > 0 && <SectionTotal label="Total misc spent" value={totalMisc} tone={DEBIT} />}
 
-                                <div style={{ marginTop: 22, display: "flex", gap: 16 }}>
+                                <div className="cards-row" style={{ marginTop: 22, display: "flex", gap: 16 }}>
                                     <div style={{ flex: 1, padding: "14px 18px", background: actualBalance < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3 }}>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Actual balance now (after misc spends)</div>
                                         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 26, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : CREDIT }}>{inr(actualBalance)}</div>
@@ -814,7 +840,7 @@
                                     Notepad style — jo likhna hai likho: roz ke khayal, kaam, yaad rakhne wali baatein. Har note pe date khud lagti hai — format <strong>dd-mmm-yy</strong> (jaise {todayText()}).
                                 </div>
 
-                                <div style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                <div className="notes-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
                                     <span>Date</span><span>Note</span><span />
                                 </div>
                                 {notes.length === 0 && (
@@ -823,7 +849,7 @@
                                     </div>
                                 )}
                                 {notes.map((n) => (
-                                    <div key={n.id} style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, alignItems: "start", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
+                                    <div key={n.id} className="notes-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, alignItems: "start", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
                                         <DateInput value={n.date} onChange={(v) => updateRow("notes", n.id, { date: v })} />
                                         <textarea
                                             value={n.text || ""}
