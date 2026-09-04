@@ -81,9 +81,54 @@
             return `${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
         };
 
+        // ---------- Date helpers (auto dd-MMM-yy, e.g. 05-Sep-26) ----------
+        const PAD = (n) => String(n).padStart(2, "0");
+        const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const monthIdx = (name) => {
+            const s = String(name || "").toLowerCase();
+            if (s.length < 3) return -1;
+            const p = s.slice(0, 3);
+            for (let i = 0; i < MONTH_NAMES.length; i++) {
+                if (MONTH_NAMES[i].toLowerCase().slice(0, 3) === p) return i;
+            }
+            return -1;
+        };
+        const fmtDateText = (d) => PAD(d.getDate()) + "-" + MONTHS[d.getMonth()] + "-" + String(d.getFullYear()).slice(-2);
+        const todayText = () => fmtDateText(new Date());
+        const parseDateAny = (raw) => {
+            const s = String(raw == null ? "" : raw).trim();
+            if (!s) return null;
+            let m = s.match(/^(\d{1,2})[-/.\s]+([A-Za-z]{3,9})[-/.\s]+(\d{2,4})$/);
+            if (m) {
+                const mon = monthIdx(m[2]);
+                if (mon < 0) return null;
+                const y = +m[3] < 100 ? +m[3] + 2000 : +m[3];
+                const d = new Date(y, mon, +m[1]);
+                return d.getFullYear() === y && d.getMonth() === mon && d.getDate() === +m[1] ? d : null;
+            }
+            m = s.match(/^(\d{1,4})[-/.\s]+(\d{1,2})[-/.\s]+(\d{1,4})$/);
+            if (m) {
+                const a = +m[1], b = +m[2], c = +m[3];
+                let y, mo, da;
+                if (a >= 1000) { y = a; mo = b; da = c; }
+                else { y = c < 100 ? c + 2000 : c; mo = b; da = a; }
+                const d = new Date(y, mo - 1, da);
+                return d.getFullYear() === y && d.getMonth() === mo - 1 && d.getDate() === da ? d : null;
+            }
+            return null;
+        };
+        const normDate = (raw) => {
+            const s = String(raw == null ? "" : raw).trim();
+            if (!s) return "";
+            const d = parseDateAny(s);
+            return d ? fmtDateText(d) : s;
+        };
+
         const TABS = [
             { id: "overview", label: "Overview", icon: "BookOpen" },
             { id: "balance", label: "Closing Balance", icon: "Wallet" },
+            { id: "misc", label: "Misc", icon: "Receipt" },
+            { id: "notes", label: "Notes", icon: "Notebook" },
             { id: "wishlist", label: "Wishlist", icon: "ListChecks" },
             { id: "savings", label: "Savings", icon: "PiggyBank" },
         ];
@@ -173,6 +218,27 @@
             );
         }
 
+        function DateInput({ value, onChange }) {
+            return (
+                <input
+                    type="text"
+                    value={value || ""}
+                    placeholder="dd-mmm-yy"
+                    onChange={(e) => onChange(e.target.value)}
+                    onBlur={(e) => {
+                        const v = normDate(e.target.value);
+                        if (v !== e.target.value) onChange(v);
+                    }}
+                    style={{
+                        width: "100%", background: "transparent", border: "none",
+                        borderBottom: `1px solid ${RULE}`, textAlign: "left",
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 12,
+                        color: TEXT, padding: "4px 2px", outline: "none",
+                    }}
+                />
+            );
+        }
+
         function RowShell({ children, onRemove }) {
             return (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 28px", gap: 10, alignItems: "center", padding: "6px 0" }}>
@@ -234,6 +300,8 @@
                 Wallet: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>,
                 ListChecks: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>,
                 PiggyBank: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.5 0 3 1.1 4.1C5.3 17 5 19.5 5 20c0 .5.5 1 1 1h4c.5 0 1-.5 1-1v-1.5h2V20c0 .5.5 1 1 1h4c.5 0 1-.5 1-1 0-.5-.3-3-.1-4.1C21.3 15 22 13.5 22 12c0-1.8-1.4-3-2.5-3.5C19.8 7.5 20 6 20 5c0-.5-.5-1-1-1z"/><circle cx="8" cy="11" r="1"/><circle cx="16" cy="11" r="1"/></svg>,
+                Receipt: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M14 8H8"/><path d="M16 12H8"/><path d="M13 16H8"/></svg>,
+                Notebook: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M16 2v20"/></svg>,
                 Settings: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>,
                 RefreshCw: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>,
                 Check: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>,
@@ -412,6 +480,16 @@
             });
             const closingBalance = running;
             const buffer = closingBalance - (Number(data.minBalance) || 0);
+            const totalMisc = sum(data.misc || [], "amount");
+            let miscRunning = closingBalance;
+            const miscRows = (data.misc || []).map((m) => {
+                const amt = Number(m.amount) || 0;
+                miscRunning -= amt;
+                return { ...m, balanceAfter: miscRunning };
+            });
+            const actualBalance = miscRunning;
+            const actualBuffer = actualBalance - (Number(data.minBalance) || 0);
+            const notes = data.notes || [];
 
             const wishlistTotalNeeded = data.wishlist.reduce((s, w) => {
                 const cost = Number(w.cost) || 0;
@@ -423,7 +501,7 @@
             const updateRow = (listKey, id, patch) =>
                 update({ [listKey]: data[listKey].map((r) => (r.id === id ? { ...r, ...patch } : r)) });
             const removeRow = (listKey, id) => update({ [listKey]: data[listKey].filter((r) => r.id !== id) });
-            const addRow = (listKey, row) => update({ [listKey]: [...data[listKey], { id: uid(), ...row }] });
+            const addRow = (listKey, row) => update({ [listKey]: [...(data[listKey] || []), { id: uid(), ...row }] });
 
             const monthOptions = Array.from(new Set([...(months || []), currentMonthKey()])).sort((a, b) => {
                 const [ma, ya] = a.split("-");
@@ -617,14 +695,18 @@
 
                                 <div style={{ marginTop: 22, display: "flex", gap: 16 }}>
                                     <div style={{ flex: 1, padding: "14px 18px", background: PAPER_DARK, borderRadius: 3 }}>
-                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Projected closing balance</div>
-                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, marginTop: 2 }}>{inr(closingBalance)}</div>
-                                        <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>This becomes next month's opening balance automatically.</div>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Projected closing balance (actual)</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : TEXT }}>{inr(actualBalance)}</div>
+                                        <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>
+                                            {totalMisc > 0
+                                                ? <>Planned bills + {inr(totalMisc)} misc spends — this is what carries to next month.</>
+                                                : "This becomes next month's opening balance automatically."}
+                                        </div>
                                     </div>
-                                    <div style={{ flex: 1, padding: "14px 18px", background: buffer < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2 }}>
+                                    <div style={{ flex: 1, padding: "14px 18px", background: actualBuffer < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2 }}>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Buffer above minimum</div>
-                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: buffer < 0 ? DEBIT : CREDIT }}>{inr(buffer)}</div>
-                                        {buffer < 0 && (
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: actualBuffer < 0 ? DEBIT : CREDIT }}>{inr(actualBuffer)}</div>
+                                        {actualBuffer < 0 && (
                                             <div style={{ display: "flex", gap: 5, alignItems: "center", fontSize: 11, color: DEBIT, marginTop: 2 }}>
                                                 <IconComponent name="AlertTriangle" size={12} /> below minimum — hold off on wishlist / CC spend
                                             </div>
@@ -672,6 +754,89 @@
                                         At the full surplus, that's about {Math.ceil(wishlistTotalNeeded / surplus)} month(s) to save it all.
                                     </div>
                                 )}
+                            </div>
+                        )}
+
+                        {tab === "misc" && (
+                            <div>
+                                <div style={{ fontSize: 12.5, lineHeight: 1.6, color: "#4A4636", marginBottom: 14 }}>
+                                    Bank-statement style — log whatever you spend (chai {inr(10)}, snacks {inr(12)}, auto {inr(15)}…)
+                                    and the balance keeps dropping. The starting balance below is what's left after the planned bills
+                                    on the Closing Balance tab. Date khud bhar jati hai — format <strong>dd-mmm-yy</strong> (jaise {todayText()}).
+                                </div>
+
+                                {miscRows.length === 0 ? (
+                                    <div style={{ padding: "18px 20px", background: PAPER_DARK, borderRadius: 3, fontSize: 12.5, color: "#6B6555", marginBottom: 12 }}>
+                                        No spends logged yet. Tap <strong>+ Add spend</strong> and enter ₹10, ₹12, ₹15… whatever you spent —
+                                        each entry instantly reduces your balance. Date khud today's date me bhar jati hai.
+                                    </div>
+                                ) : (
+                                    <div style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                        <span>Date</span><span>What</span><span style={{ textAlign: "right" }}>Amount</span><span style={{ textAlign: "right" }}>Balance After</span><span />
+                                    </div>
+                                )}
+                                {miscRows.map((m) => (
+                                    <div key={m.id} style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
+                                        <DateInput value={m.date} onChange={(v) => updateRow("misc", m.id, { date: v })} />
+                                        <TextCell value={m.name} onChange={(v) => updateRow("misc", m.id, { name: v })} placeholder="kya kharcha hua?" />
+                                        <NumberCell value={m.amount} placeholder="0" onChange={(v) => updateRow("misc", m.id, { amount: v })} tone={DEBIT} />
+                                        <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: m.balanceAfter < 0 ? DEBIT : TEXT }}>{inr(m.balanceAfter)}</span>
+                                        <button onClick={() => removeRow("misc", m.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                        </button>
+                                    </div>
+                                ))}
+                                <AddButton onClick={() => addRow("misc", { date: todayText(), name: "", amount: "" })}>Add spend</AddButton>
+                                {totalMisc > 0 && <SectionTotal label="Total misc spent" value={totalMisc} tone={DEBIT} />}
+
+                                <div style={{ marginTop: 22, display: "flex", gap: 16 }}>
+                                    <div style={{ flex: 1, padding: "14px 18px", background: actualBalance < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3 }}>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Actual balance now (after misc spends)</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 26, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : CREDIT }}>{inr(actualBalance)}</div>
+                                        <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>Starts at {inr(closingBalance)} after planned bills.</div>
+                                    </div>
+                                    <div style={{ flex: 1, padding: "14px 18px", background: actualBuffer < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2 }}>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Buffer above minimum ({inr(data.minBalance)})</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: actualBuffer < 0 ? DEBIT : CREDIT }}>{inr(actualBuffer)}</div>
+                                        {actualBuffer < 0 && (
+                                            <div style={{ display: "flex", gap: 5, alignItems: "center", fontSize: 11, color: DEBIT, marginTop: 2 }}>
+                                                <IconComponent name="AlertTriangle" size={12} /> below minimum — hold off on more spend
+                                            </div>
+                                        )}
+                                    </div>                                    </div>
+                            </div>
+                        )}
+
+                        {tab === "notes" && (
+                            <div>
+                                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>📔 Notes / Journal</div>
+                                <div style={{ fontSize: 12, color: "#6B6555", marginBottom: 14, lineHeight: 1.6 }}>
+                                    Notepad style — jo likhna hai likho: roz ke khayal, kaam, yaad rakhne wali baatein. Har note pe date khud lagti hai — format <strong>dd-mmm-yy</strong> (jaise {todayText()}).
+                                </div>
+
+                                <div style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                    <span>Date</span><span>Note</span><span />
+                                </div>
+                                {notes.length === 0 && (
+                                    <div style={{ padding: "18px 20px", background: PAPER_DARK, borderRadius: 3, fontSize: 12.5, color: "#6B6555", margin: "12px 0" }}>
+                                        Koi note nahi hai abhi — neeche <strong>+ Add note</strong> dabao aur likhna shuru karo.
+                                    </div>
+                                )}
+                                {notes.map((n) => (
+                                    <div key={n.id} style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, alignItems: "start", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
+                                        <DateInput value={n.date} onChange={(v) => updateRow("notes", n.id, { date: v })} />
+                                        <textarea
+                                            value={n.text || ""}
+                                            onChange={(e) => updateRow("notes", n.id, { text: e.target.value })}
+                                            placeholder="Aaj kya hua, kya soch rahe ho… kuch bhi likho"
+                                            style={{ width: "100%", background: "transparent", border: "none", borderBottom: `1px solid ${RULE}`, fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 13.5, lineHeight: 1.5, color: TEXT, resize: "vertical", minHeight: 44, padding: "2px", outline: "none" }}
+                                        />
+                                        <button onClick={() => removeRow("notes", n.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282", paddingTop: 4 }} aria-label="Delete note">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                        </button>
+                                    </div>
+                                ))}
+                                <AddButton onClick={() => addRow("notes", { date: todayText(), text: "" })}>Add note</AddButton>
                             </div>
                         )}
 
