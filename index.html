@@ -163,16 +163,33 @@
         const TEXT = "#26241D";
 
         // ---------- Backend Calls ----------
+        // Apps Script /exec URLs can throw transient errors (a 404 right after a
+        // redeploy, a hiccup on Google's side, a flaky network). Retry a few times
+        // with backoff so saves/loads stay smooth instead of failing on the first try.
+        async function retryFetch(url, options, attempts = 3) {
+            let lastErr = null;
+            for (let attempt = 1; attempt <= attempts; attempt++) {
+                try {
+                    const res = await fetch(url, options);
+                    if (!res.ok) throw new Error("HTTP " + res.status + (res.statusText ? " " + res.statusText : ""));
+                    return await res.json();
+                } catch (error) {
+                    lastErr = error;
+                    console.error("Request attempt " + attempt + " failed:", error);
+                    if (attempt < attempts) await new Promise((r) => setTimeout(r, attempt * 800));
+                }
+            }
+            throw lastErr;
+        }
+
         async function fetchMonth(baseUrl, monthKey) {
             const fullUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}month=${encodeURIComponent(monthKey)}`;
             try {
-                const res = await fetch(fullUrl, {
+                return await retryFetch(fullUrl, {
                     method: "GET",
                     cache: "no-store",
                     headers: { "Accept": "application/json" },
                 });
-                if (!res.ok) throw new Error("HTTP " + res.status + (res.statusText ? " " + res.statusText : ""));
-                return res.json();
             } catch (error) {
                 console.error("Fetch error:", error);
                 throw error;
@@ -181,7 +198,7 @@
 
         async function saveMonth(baseUrl, monthKey, data) {
             try {
-                const res = await fetch(baseUrl, {
+                return await retryFetch(baseUrl, {
                     method: "POST",
                     cache: "no-store",
                     headers: {
@@ -192,8 +209,6 @@
                     },
                     body: JSON.stringify({ month: monthKey, data }),
                 });
-                if (!res.ok) throw new Error("HTTP " + res.status + (res.statusText ? " " + res.statusText : ""));
-                return res.json();
             } catch (error) {
                 console.error("Save error:", error);
                 throw error;
@@ -378,7 +393,8 @@
                 } catch (err) {
                     console.error("Load error:", err);
                     setStatus("offline");
-                    setUrlError("Couldn't reach the Sheet: " + (err && err.message ? err.message : "check connection"));
+                    const lmsg = err && err.message ? String(err.message) : "check connection";
+                    setUrlError("Couldn't reach the Sheet: " + lmsg + (lmsg.indexOf("404") >= 0 ? " — the Sheet URL looks stale; open Settings and paste the current /exec URL." : ""));
                 }
             }, []);
 
@@ -411,7 +427,8 @@
                     } catch (err) {
                         console.error("Save error:", err);
                         setStatus("error");
-                        setUrlError("Save failed: " + (err && err.message ? err.message : "unknown error"));
+                        const smsg = err && err.message ? String(err.message) : "unknown error";
+                        setUrlError("Save failed: " + smsg + (smsg.indexOf("404") >= 0 ? " — the Sheet URL looks stale; open Settings and paste the current /exec URL." : ""));
                     }
                 }, 700);
 
@@ -433,7 +450,8 @@
                     setUrlError("");
                 } catch (err) {
                     console.error("Connection error:", err);
-                    setUrlError("Couldn't reach that URL (" + (err && err.message ? err.message : "no response") + "). Check it's deployed as 'Anyone' and ends in /exec.");
+                    const cmsg = err && err.message ? String(err.message) : "no response";
+                    setUrlError("Couldn't reach that URL (" + cmsg + "). Check it's deployed as 'Anyone' and ends in /exec." + (cmsg.indexOf("404") >= 0 ? " The URL itself looks wrong or the deployment was deleted — copy the current one from Deploy → Manage deployments." : ""));
                 } finally {
                     setCheckingUrl(false);
                 }
