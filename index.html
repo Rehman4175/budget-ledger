@@ -12,9 +12,6 @@
     <!-- Babel Standalone for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         
@@ -119,7 +116,8 @@
         const parseDateAny = (raw) => {
             const s = String(raw == null ? "" : raw).trim();
             if (!s) return null;
-            let m = s.match(/^(\d{1,2})[-/.\s]+([A-Za-z]{3,9})[-/.\s]+(\d{2,4})$/);
+            // day-month-year — separators optional, so 6sep26 / 06-Sep-26 / 5 september 2026 all work
+            let m = s.match(/^(\d{1,2})[-/.\s]*([A-Za-z]{3,9})[-/.\s]*(\d{2,4})$/);
             if (m) {
                 const mon = monthIdx(m[2]);
                 if (mon < 0) return null;
@@ -161,6 +159,16 @@
         const DEBIT = "#A6392C";
         const CREDIT = "#2E6650";
         const TEXT = "#26241D";
+
+        const SECURITY_QUESTIONS = [
+            "What is your favorite actor's last name?",
+            "What is your pet's name?",
+            "What is your best friend's name?",
+            "What is your mother's maiden name?",
+            "What city were you born in?",
+            "What is the name of your first school?",
+            "What is your childhood nickname?",
+        ];
 
         // ---------- Backend Calls ----------
         // Apps Script /exec URLs can throw transient errors (a 404 right after a
@@ -272,7 +280,7 @@
                     type="text"
                     value={value || ""}
                     placeholder="dd-mmm-yy"
-                    onChange={(e) => onChange(e.target.value)}
+                    onChange={(e) => onChange(normDate(e.target.value))}
                     onBlur={(e) => {
                         const v = normDate(e.target.value);
                         if (v !== e.target.value) onChange(v);
@@ -376,7 +384,7 @@
                     <div style={{ fontSize: 11, letterSpacing: 1.5, color: "#6B6555" }}>Rehman &middot; Personal Ledger</div>
                     <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>🔒 Ledger locked</div>
                     <p style={{ fontSize: 12.5, color: "#4A4636", marginTop: 8, lineHeight: 1.5 }}>
-                        Is link par PIN laga hai — kholne ke liye PIN daalo. Kuch der inactive rehne par app khud lock ho jati hai.
+                        This link is protected by a PIN — enter it to open. The app locks itself automatically after some idle time.
                     </p>
                     <form onSubmit={submit} style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
                         <input
@@ -385,14 +393,14 @@
                             autoFocus
                             value={value}
                             onChange={(e) => setValue(e.target.value)}
-                            placeholder="PIN daalo"
+                            placeholder="Enter PIN"
                             style={{ padding: "10px 12px", fontSize: 18, fontFamily: "'IBM Plex Mono', monospace", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none", textAlign: "center", letterSpacing: 6 }}
                         />
                         {error && <div style={{ fontSize: 12, color: DEBIT }}>{error}</div>}
                         <button type="submit" style={{ padding: "10px 18px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Unlock</button>
                     </form>
                     <div style={{ marginTop: 12, textAlign: "center" }}>
-                        <button onClick={onForgot} style={{ background: "none", border: "none", color: "#8A8470", textDecoration: "underline", cursor: "pointer", fontSize: 11.5 }}>Forgot PIN? Reset</button>
+                        <button onClick={onForgot} style={{ background: "none", border: "none", color: "#8A8470", textDecoration: "underline", cursor: "pointer", fontSize: 11.5 }}>Forgot PIN?</button>
                     </div>
                 </div>
             );
@@ -402,16 +410,19 @@
             const [p, setP] = useState("");
             const [c, setC] = useState("");
             const [secs, setSecs] = useState(initialSeconds || 60);
+            const [qs, setQs] = useState(() => SECURITY_QUESTIONS.slice(0, 3).map((q) => ({ q, a: "" })));
             const submit = (e) => {
                 e.preventDefault();
-                onSave(p, c, secs);
+                onSave(p, c, secs, qs);
             };
+            const setQ = (i, patch) => setQs((arr) => arr.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+            const optionsFor = (i) => SECURITY_QUESTIONS.filter((q) => q === qs[i].q || !qs.some((x, j) => j !== i && x.q === q));
             return (
                 <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", background: PAPER, border: `1px solid ${RULE}`, borderRadius: 2, padding: 32, color: TEXT, maxWidth: 400, width: "100%" }}>
                     <div style={{ fontSize: 11, letterSpacing: 1.5, color: "#6B6555" }}>Rehman &middot; Personal Ledger</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>🔐 PIN set karo</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>🔐 Set your PIN</div>
                     <p style={{ fontSize: 12.5, color: "#4A4636", marginTop: 8, lineHeight: 1.5 }}>
-                        Jaise hi ye link khulega, pehle PIN maanga jayega. Timer ke baad app khud lock ho jayegi (30 sec se 5 min tak).
+                        As soon as this link opens, it will ask for the PIN first. After the timer, the app locks itself automatically (30 sec to 5 min).
                     </p>
                     <form onSubmit={submit} style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
                         <input
@@ -420,7 +431,7 @@
                             autoFocus
                             value={p}
                             onChange={(e) => setP(e.target.value)}
-                            placeholder="Naya PIN (4+ digits, sirf numbers)"
+                            placeholder="New PIN (4+ digits, numbers only)"
                             style={{ padding: "10px 12px", fontSize: 16, fontFamily: "'IBM Plex Mono', monospace", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none", textAlign: "center", letterSpacing: 4 }}
                         />
                         <input
@@ -428,7 +439,7 @@
                             inputMode="numeric"
                             value={c}
                             onChange={(e) => setC(e.target.value)}
-                            placeholder="PIN dobara likho"
+                            placeholder="Confirm PIN"
                             style={{ padding: "10px 12px", fontSize: 16, fontFamily: "'IBM Plex Mono', monospace", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none", textAlign: "center", letterSpacing: 4 }}
                         />
                         <label style={{ fontSize: 12, color: "#6B6555", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -445,8 +456,134 @@
                                 <option value={300}>5 min</option>
                             </select>
                         </label>
+                        <div style={{ marginTop: 4, paddingTop: 10, borderTop: `1px solid ${RULE}` }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 700 }}>Security questions (for "Forgot PIN")</div>
+                            <div style={{ fontSize: 11.5, color: "#6B6555", marginTop: 2, marginBottom: 8 }}>
+                                Pick 3 questions and answer them — these are asked if you ever forget the PIN.
+                            </div>
+                            {qs.map((item, i) => (
+                                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+                                    <select
+                                        value={item.q}
+                                        onChange={(e) => setQ(i, { q: e.target.value })}
+                                        style={{ padding: "6px 8px", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", fontSize: 12 }}
+                                    >
+                                        {optionsFor(i).map((q) => (
+                                            <option key={q} value={q}>{q}</option>
+                                        ))}
+                                    </select>
+                                    <input
+                                        type="text"
+                                        value={item.a}
+                                        onChange={(e) => setQ(i, { a: e.target.value })}
+                                        placeholder={"Answer " + (i + 1)}
+                                        style={{ padding: "7px 10px", fontSize: 13, border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none" }}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+
                         {error && <div style={{ fontSize: 12, color: DEBIT }}>{error}</div>}
                         <button type="submit" style={{ padding: "10px 18px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Save PIN</button>
+                    </form>
+                </div>
+            );
+        }
+
+        function ForgotPinScreen({ questions, error, onReset, onBack }) {
+            const [step, setStep] = useState("verify");
+            const [answers, setAnswers] = useState(["", "", ""]);
+            const [np, setNp] = useState("");
+            const [nc, setNc] = useState("");
+            const [localError, setLocalError] = useState("");
+
+            const hasQuestions = questions && questions.length === 3 && questions.every((q) => q && q.q && q.a);
+            const shownError = localError || error || "";
+            const inputStyle = {
+                padding: "10px 12px", fontSize: 16, fontFamily: "'IBM Plex Mono', monospace",
+                border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none",
+            };
+            const cardStyle = { fontFamily: "'Source Serif 4', Georgia, serif", background: PAPER, border: `1px solid ${RULE}`, borderRadius: 2, padding: 32, color: TEXT, maxWidth: 420, width: "100%" };
+
+            if (!hasQuestions) {
+                return (
+                    <div style={cardStyle}>
+                        <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>🔒 PIN reset unavailable</div>
+                        <p style={{ fontSize: 12.5, color: "#4A4636", marginTop: 8, lineHeight: 1.5 }}>
+                            Security questions were never set up on this device, so the PIN can't be recovered here.
+                            Clear this site's browser data (localStorage) to start fresh.
+                        </p>
+                        <button onClick={onBack} style={{ marginTop: 14, padding: "8px 16px", background: "none", color: INK, border: `1px solid ${RULE}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Back</button>
+                    </div>
+                );
+            }
+
+            const verify = () => {
+                const norm = (x) => String(x || "").trim().toLowerCase();
+                for (let i = 0; i < 3; i++) {
+                    if (norm(answers[i]) !== norm(questions[i].a)) {
+                        setLocalError("Answer " + (i + 1) + " is incorrect — try again.");
+                        return;
+                    }
+                }
+                setLocalError("");
+                setStep("newpin");
+            };
+
+            const submitNew = () => {
+                const clean = String(np || "").trim();
+                if (clean.length < 4 || !/^\d+$/.test(clean)) {
+                    setLocalError("New PIN must be at least 4 digits — numbers only.");
+                    return;
+                }
+                if (clean !== String(nc || "").trim()) {
+                    setLocalError("New PINs don't match — try again.");
+                    return;
+                }
+                onReset(clean);
+            };
+
+            if (step === "newpin") {
+                return (
+                    <div style={cardStyle}>
+                        <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>🔐 Set a new PIN</div>
+                        <p style={{ fontSize: 12.5, color: "#4A4636", marginTop: 8, lineHeight: 1.5 }}>
+                            Security answers verified. Choose your new PIN.
+                        </p>
+                        <form onSubmit={(e) => { e.preventDefault(); submitNew(); }} style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                            <input type="password" inputMode="numeric" autoFocus value={np} onChange={(e) => setNp(e.target.value)} placeholder="New PIN (4+ digits, numbers only)" style={{ ...inputStyle, textAlign: "center", letterSpacing: 4 }} />
+                            <input type="password" inputMode="numeric" value={nc} onChange={(e) => setNc(e.target.value)} placeholder="Confirm new PIN" style={{ ...inputStyle, textAlign: "center", letterSpacing: 4 }} />
+                            {shownError && <div style={{ fontSize: 12, color: DEBIT }}>{shownError}</div>}
+                            <button type="submit" style={{ padding: "10px 18px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Save new PIN</button>
+                            <button type="button" onClick={() => { setStep("verify"); setLocalError(""); }} style={{ background: "none", border: "none", color: "#8A8470", textDecoration: "underline", cursor: "pointer", fontSize: 11.5 }}>Back</button>
+                        </form>
+                    </div>
+                );
+            }
+
+            return (
+                <div style={cardStyle}>
+                    <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>🔒 Forgot PIN</div>
+                    <p style={{ fontSize: 12.5, color: "#4A4636", marginTop: 8, lineHeight: 1.5 }}>
+                        Answer the security questions to reset your PIN.
+                    </p>
+                    <form onSubmit={(e) => { e.preventDefault(); verify(); }} style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                        {questions.map((q, i) => (
+                            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <div style={{ fontSize: 12, color: "#6B6555" }}>{q.q}</div>
+                                <input
+                                    type="text"
+                                    autoFocus={i === 0}
+                                    value={answers[i]}
+                                    onChange={(e) => setAnswers((a) => a.map((x, j) => (j === i ? e.target.value : x)))}
+                                    placeholder={"Answer " + (i + 1)}
+                                    style={{ padding: "8px 10px", fontSize: 14, border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none" }}
+                                />
+                            </div>
+                        ))}
+                        {shownError && <div style={{ fontSize: 12, color: DEBIT }}>{shownError}</div>}
+                        <button type="submit" style={{ padding: "10px 18px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Verify</button>
+                        <button type="button" onClick={onBack} style={{ background: "none", border: "none", color: "#8A8470", textDecoration: "underline", cursor: "pointer", fontSize: 11.5 }}>Back to login</button>
                     </form>
                 </div>
             );
@@ -473,6 +610,7 @@
 
             const saveTimer = useRef(null);
             const skipNextSave = useRef(false);
+            const pendingSave = useRef(null);
 
             // Remember the show/hide amounts preference
             useEffect(() => {
@@ -483,25 +621,41 @@
             const [pin, setPin] = useState(() => localStorage.getItem("ledger-pin-v1") || "");
             const [isLocked, setIsLocked] = useState(() => Boolean(localStorage.getItem("ledger-pin-v1")));
             const [pinError, setPinError] = useState("");
+            const [showForgot, setShowForgot] = useState(false);
+            const [secQuestions, setSecQuestions] = useState(() => {
+                try {
+                    const v = JSON.parse(localStorage.getItem("ledger-security-v1") || "null");
+                    return v && v.length ? v : null;
+                } catch (e) { return null; }
+            });
             const [lockSeconds, setLockSeconds] = useState(() => {
                 const s = Number(localStorage.getItem("ledger-lock-seconds-v1"));
                 return s >= 30 && s <= 300 ? s : 60;
             });
             const lastActivity = useRef(Date.now());
 
-            const savePin = (p, c, secs) => {
+            const savePin = (p, c, secs, sec) => {
                 const clean = String(p || "").trim();
                 if (clean.length < 4 || !/^\d+$/.test(clean)) {
-                    setPinError("PIN kam se kam 4 digits ka hona chahiye — sirf numbers.");
+                    setPinError("PIN must be at least 4 digits — numbers only.");
                     return;
                 }
                 if (clean !== String(c || "").trim()) {
-                    setPinError("Dono PIN match nahi kar rahe — dobara likho.");
+                    setPinError("PINs don't match — try again.");
                     return;
+                }
+                const secClean = (sec || []).map((s) => ({ q: String(s.q || "").trim(), a: String(s.a || "").trim() }));
+                for (let i = 0; i < secClean.length; i++) {
+                    if (!secClean[i].q || !secClean[i].a) {
+                        setPinError("Answer all " + secClean.length + " security questions.");
+                        return;
+                    }
                 }
                 localStorage.setItem("ledger-pin-v1", clean);
                 localStorage.setItem("ledger-lock-seconds-v1", String(secs));
+                localStorage.setItem("ledger-security-v1", JSON.stringify(secClean));
                 setLockSeconds(secs);
+                setSecQuestions(secClean);
                 setPin(clean);
                 setPinError("");
                 setIsLocked(false);
@@ -514,7 +668,7 @@
                     setPinError("");
                     lastActivity.current = Date.now();
                 } else {
-                    setPinError("Galat PIN — dobara try karo.");
+                    setPinError("Wrong PIN — try again.");
                 }
             };
 
@@ -523,6 +677,16 @@
                 setPin("");
                 setPinError("");
                 setIsLocked(false);
+            };
+
+            const resetPinWithSecurity = (newPin) => {
+                const clean = String(newPin || "").trim();
+                if (clean.length < 4 || !/^\d+$/.test(clean)) return;
+                localStorage.setItem("ledger-pin-v1", clean);
+                setPin(clean);
+                setPinError("");
+                setIsLocked(false);
+                lastActivity.current = Date.now();
             };
 
             // Auto-lock after the chosen idle time (30s – 5min)
@@ -559,20 +723,37 @@
 
             // Load month data
             const loadMonth = useCallback(async (baseUrl, mk) => {
-                setStatus("loading");
+                // 1) Show a saved copy instantly — no network wait on the phone
+                const cacheKey = "ledger-cache-v1-" + mk;
+                let cached = null;
+                try { cached = JSON.parse(localStorage.getItem(cacheKey) || "null"); } catch (e) { cached = null; }
+                if (cached && cached.data) {
+                    skipNextSave.current = true;
+                    setData(cached.data);
+                    setStatus("synced");
+                }
                 setUrlError("");
+                if (!cached || !cached.data) setStatus("loading");
+                // 2) Then fetch fresh data in the background and update
                 try {
                     const json = await fetchMonth(baseUrl, mk);
                     skipNextSave.current = true;
                     setData(json.data);
                     setMonths(json.months || []);
+                    try { localStorage.setItem(cacheKey, JSON.stringify({ data: json.data, at: Date.now() })); } catch (e) {}
                     setStatus("synced");
                     setUrlError("");
                 } catch (err) {
                     console.error("Load error:", err);
-                    setStatus("offline");
-                    const lmsg = err && err.message ? String(err.message) : "check connection";
-                    setUrlError("Couldn't reach the Sheet: " + lmsg + (lmsg.indexOf("404") >= 0 ? " — the Sheet URL looks stale; open Settings and paste the current /exec URL." : ""));
+                    if (cached && cached.data) {
+                        // Keep the saved copy on screen; changes will sync when online
+                        setStatus("synced");
+                        setUrlError("Offline — showing the last saved copy. Changes will sync when the network is back.");
+                    } else {
+                        setStatus("offline");
+                        const lmsg = err && err.message ? String(err.message) : "check connection";
+                        setUrlError("Couldn't reach the Sheet: " + lmsg + (lmsg.indexOf("404") >= 0 ? " — the Sheet URL looks stale; open Settings and paste the current /exec URL." : ""));
+                    }
                 }
             }, []);
 
@@ -599,19 +780,51 @@
                 saveTimer.current = setTimeout(async () => {
                     try {
                         const json = await saveMonth(url, monthKey, data);
+                        pendingSave.current = null;
                         setMonths((prev) => (json.months && json.months.length ? json.months : prev));
+                        try { localStorage.setItem("ledger-cache-v1-" + monthKey, JSON.stringify({ data, at: Date.now() })); } catch (e) {}
                         setStatus("synced");
                         setUrlError("");
                     } catch (err) {
                         console.error("Save error:", err);
+                        pendingSave.current = data; // queue it — auto-sync when the network is back
                         setStatus("error");
                         const smsg = err && err.message ? String(err.message) : "unknown error";
-                        setUrlError("Save failed: " + smsg + (smsg.indexOf("404") >= 0 ? " — the Sheet URL looks stale; open Settings and paste the current /exec URL." : ""));
+                        setUrlError("Save failed: " + smsg + " — will retry automatically when online." + (smsg.indexOf("404") >= 0 ? " If this keeps happening, open Settings and paste the current /exec URL." : ""));
                     }
                 }, 700);
 
                 return () => clearTimeout(saveTimer.current);
             }, [data, url, monthKey]);
+
+            // Auto-sync: a failed save is queued (pendingSave) and retried in the
+            // background — every 5 seconds and immediately when the network returns.
+            useEffect(() => {
+                if (!url) return;
+                const tryPending = async () => {
+                    const pending = pendingSave.current;
+                    if (!pending) return;
+                    if (typeof navigator !== "undefined" && !navigator.onLine) return;
+                    setStatus("syncing");
+                    try {
+                        const json = await saveMonth(url, monthKey, pending);
+                        pendingSave.current = null;
+                        setMonths((prev) => (json.months && json.months.length ? json.months : prev));
+                        try { localStorage.setItem("ledger-cache-v1-" + monthKey, JSON.stringify({ data: pending, at: Date.now() })); } catch (e) {}
+                        setStatus("synced");
+                        setUrlError("");
+                    } catch (err) {
+                        setStatus("error");
+                    }
+                };
+                const onOnline = () => { tryPending(); };
+                window.addEventListener("online", onOnline);
+                const iv = setInterval(tryPending, 5000);
+                return () => {
+                    window.removeEventListener("online", onOnline);
+                    clearInterval(iv);
+                };
+            }, [url, monthKey]);
 
             const connect = async () => {
                 const candidate = urlDraft.trim();
@@ -655,7 +868,11 @@
             if (isLocked) {
                 return (
                     <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", background: PAPER, minHeight: 420, display: "flex", justifyContent: "center", alignItems: "flex-start", padding: "40px 16px" }}>
-                        <LockedScreen error={pinError} onUnlock={tryUnlock} onForgot={resetPin} />
+                        {showForgot ? (
+                            <ForgotPinScreen questions={secQuestions} error={pinError} onReset={resetPinWithSecurity} onBack={() => { setShowForgot(false); setPinError(""); }} />
+                        ) : (
+                            <LockedScreen error={pinError} onUnlock={tryUnlock} onForgot={() => setShowForgot(true)} />
+                        )}
                     </div>
                 );
             }
@@ -716,7 +933,7 @@
                             <div>
                                 <div>Opening the ledger…</div>
                                 <div style={{ fontSize: 11.5, color: "#8A8470", marginTop: 8 }}>
-                                    Sheet se data aa raha hai — pehli baar me 5-10 second lag sakte hain.
+                                    Fetching data from the Sheet — the first load can take a few seconds.
                                 </div>
                             </div>
                         )}
@@ -774,7 +991,7 @@
                 syncing: "saving…",
                 synced: "synced to Sheet",
                 offline: "offline — retry",
-                error: "save failed — retry",
+                error: "offline — will auto-sync",
                 idle: "",
             }[status];
 
@@ -866,7 +1083,7 @@
                                 </label>
                                 <button onClick={() => setIsLocked(true)} style={{ padding: "7px 14px", background: "none", color: INK, border: `1px solid ${RULE}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Lock now</button>
                                 <button onClick={() => {
-                                    const np = window.prompt("Naya PIN (4+ digits, sirf numbers):");
+                                    const np = window.prompt("New PIN (4+ digits, numbers only):");
                                     if (np === null) return;
                                     const clean = np.trim();
                                     if (/^\d{4,}$/.test(clean)) {
@@ -875,11 +1092,11 @@
                                         setPinError("");
                                         lastActivity.current = Date.now();
                                     } else {
-                                        window.alert("PIN 4+ digits ka hona chahiye — sirf numbers.");
+                                        window.alert("PIN must be at least 4 digits — numbers only.");
                                     }
                                 }} style={{ padding: "7px 14px", background: "none", color: INK, border: `1px solid ${RULE}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Change PIN</button>
                                 <button onClick={() => {
-                                    if (window.confirm("PIN remove karna hai? Phir koi bhi bina PIN ke open kar sakega.")) {
+                                    if (window.confirm("Remove PIN? Anyone will then be able to open without a PIN.")) {
                                         resetPin();
                                     }
                                 }} style={{ padding: "7px 14px", background: "none", color: DEBIT, border: `1px solid ${DEBIT}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Remove PIN</button>
@@ -1004,7 +1221,7 @@
                                     </div>
                                     {expenseRows.map((e) => (
                                         <div key={e.id} className="expense-grid" style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
-                                            <TextCell value={e.date} onChange={(v) => updateRow("expenses", e.id, { date: v })} />
+                                            <DateInput value={e.date} onChange={(v) => updateRow("expenses", e.id, { date: v })} />
                                             <TextCell value={e.name} onChange={(v) => updateRow("expenses", e.id, { name: v })} />
                                             <NumberCell value={e.planned} onChange={(v) => updateRow("expenses", e.id, { planned: v })} />
                                             <NumberCell value={e.actual} placeholder="—" onChange={(v) => updateRow("expenses", e.id, { actual: v })} tone={DEBIT} />
@@ -1086,13 +1303,13 @@
                                 <div style={{ fontSize: 12.5, lineHeight: 1.6, color: "#4A4636", marginBottom: 14 }}>
                                     Bank-statement style — log whatever you spend (chai {inr(10)}, snacks {inr(12)}, auto {inr(15)}…)
                                     and the balance keeps dropping. The starting balance below is what's left after the planned bills
-                                    on the Closing Balance tab. Date khud bhar jati hai — format <strong>dd-mmm-yy</strong> (jaise {todayText()}).
+                                    on the Closing Balance tab. Dates auto-fill as <strong>dd-mmm-yy</strong> (e.g. {todayText()}).
                                 </div>
 
                                 {miscRows.length === 0 ? (
                                     <div style={{ padding: "18px 20px", background: PAPER_DARK, borderRadius: 3, fontSize: 12.5, color: "#6B6555", marginBottom: 12 }}>
                                         No spends logged yet. Tap <strong>+ Add spend</strong> and enter ₹10, ₹12, ₹15… whatever you spent —
-                                        each entry instantly reduces your balance. Date khud today's date me bhar jati hai.
+                                        each entry instantly reduces your balance. Dates auto-fill with today's date.
                                     </div>
                                 ) : (
                                     <div className="misc-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
@@ -1102,7 +1319,7 @@
                                 {miscRows.map((m) => (
                                     <div key={m.id} className="misc-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
                                         <DateInput value={m.date} onChange={(v) => updateRow("misc", m.id, { date: v })} />
-                                        <TextCell value={m.name} onChange={(v) => updateRow("misc", m.id, { name: v })} placeholder="kya kharcha hua?" />
+                                        <TextCell value={m.name} onChange={(v) => updateRow("misc", m.id, { name: v })} placeholder="what was it for?" />
                                         <NumberCell value={m.amount} placeholder="0" onChange={(v) => updateRow("misc", m.id, { amount: v })} tone={DEBIT} />
                                         <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: m.balanceAfter < 0 ? DEBIT : TEXT }}>{amt(m.balanceAfter)}</span>
                                         <button onClick={() => removeRow("misc", m.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
@@ -1135,7 +1352,7 @@
                             <div>
                                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>📔 Notes / Journal</div>
                                 <div style={{ fontSize: 12, color: "#6B6555", marginBottom: 14, lineHeight: 1.6 }}>
-                                    Notepad style — jo likhna hai likho: roz ke khayal, kaam, yaad rakhne wali baatein. Har note pe date khud lagti hai — format <strong>dd-mmm-yy</strong> (jaise {todayText()}).
+                                    Notepad style — write whatever you want: daily thoughts, tasks, things to remember. Each note gets its date automatically — format <strong>dd-mmm-yy</strong> (e.g. {todayText()}).
                                 </div>
 
                                 <div className="notes-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
@@ -1143,7 +1360,7 @@
                                 </div>
                                 {notes.length === 0 && (
                                     <div style={{ padding: "18px 20px", background: PAPER_DARK, borderRadius: 3, fontSize: 12.5, color: "#6B6555", margin: "12px 0" }}>
-                                        Koi note nahi hai abhi — neeche <strong>+ Add note</strong> dabao aur likhna shuru karo.
+                                        No notes yet — tap <strong>+ Add note</strong> below and start writing.
                                     </div>
                                 )}
                                 {notes.map((n) => (
@@ -1152,7 +1369,7 @@
                                         <textarea
                                             value={n.text || ""}
                                             onChange={(e) => updateRow("notes", n.id, { text: e.target.value })}
-                                            placeholder="Aaj kya hua, kya soch rahe ho… kuch bhi likho"
+                                            placeholder="What happened today, what's on your mind… write anything"
                                             style={{ width: "100%", background: "transparent", border: "none", borderBottom: `1px solid ${RULE}`, fontFamily: "'Source Serif 4', Georgia, serif", fontSize: 13.5, lineHeight: 1.5, color: TEXT, resize: "vertical", minHeight: 44, padding: "2px", outline: "none" }}
                                         />
                                         <button onClick={() => removeRow("notes", n.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282", paddingTop: 4 }} aria-label="Delete note">
