@@ -166,16 +166,24 @@
         // Apps Script /exec URLs can throw transient errors (a 404 right after a
         // redeploy, a hiccup on Google's side, a flaky network). Retry a few times
         // with backoff so saves/loads stay smooth instead of failing on the first try.
-        async function retryFetch(url, options, attempts = 3) {
+        // A hard timeout per attempt stops the "Opening the ledger…" screen from
+        // hanging forever when the request never gets an answer.
+        async function retryFetch(url, options, attempts = 3, timeoutMs = 10000) {
             let lastErr = null;
             for (let attempt = 1; attempt <= attempts; attempt++) {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), timeoutMs);
                 try {
-                    const res = await fetch(url, options);
+                    const res = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
+                    clearTimeout(timer);
                     if (!res.ok) throw new Error("HTTP " + res.status + (res.statusText ? " " + res.statusText : ""));
                     return await res.json();
                 } catch (error) {
-                    lastErr = error;
-                    console.error("Request attempt " + attempt + " failed:", error);
+                    clearTimeout(timer);
+                    lastErr = error && error.name === "AbortError"
+                        ? new Error("Timed out after " + (timeoutMs / 1000) + "s — the Sheet didn't answer (quota exhausted or script stuck). Wait a bit and retry.")
+                        : error;
+                    console.error("Request attempt " + attempt + " failed:", lastErr);
                     if (attempt < attempts) await new Promise((r) => setTimeout(r, attempt * 800));
                 }
             }
@@ -290,11 +298,11 @@
             );
         }
 
-        function SectionTotal({ label, value, tone }) {
+        function SectionTotal({ label, value, tone, hidden }) {
             return (
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 4px", borderTop: `2px solid ${INK}`, marginTop: 4 }}>
                     <span style={{ fontWeight: 600, fontSize: 13 }}>{label}</span>
-                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 15, color: tone || TEXT }}>{inr(value)}</span>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 15, color: tone || TEXT }}>{hidden ? "****" : inr(value)}</span>
                 </div>
             );
         }
@@ -349,8 +357,99 @@
                 ChevronDown: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>,
                 AlertTriangle: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>,
                 IndianRupee: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12"/><path d="M6 8h12"/><path d="m6 13 8.5 8"/><path d="M6 13h9"/><path d="M18 13h3"/></svg>,
+                Eye: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>,
+                EyeOff: <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></svg>,
             };
             return icons[name] || null;
+        }
+
+        // ---------- PIN Lock Screens ----------
+        function LockedScreen({ error, onUnlock, onForgot }) {
+            const [value, setValue] = useState("");
+            const submit = (e) => {
+                e.preventDefault();
+                onUnlock(value);
+                setValue("");
+            };
+            return (
+                <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", background: PAPER, border: `1px solid ${RULE}`, borderRadius: 2, padding: 32, color: TEXT, maxWidth: 400, width: "100%" }}>
+                    <div style={{ fontSize: 11, letterSpacing: 1.5, color: "#6B6555" }}>Rehman &middot; Personal Ledger</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>🔒 Ledger locked</div>
+                    <p style={{ fontSize: 12.5, color: "#4A4636", marginTop: 8, lineHeight: 1.5 }}>
+                        Is link par PIN laga hai — kholne ke liye PIN daalo. Kuch der inactive rehne par app khud lock ho jati hai.
+                    </p>
+                    <form onSubmit={submit} style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                        <input
+                            type="password"
+                            inputMode="numeric"
+                            autoFocus
+                            value={value}
+                            onChange={(e) => setValue(e.target.value)}
+                            placeholder="PIN daalo"
+                            style={{ padding: "10px 12px", fontSize: 18, fontFamily: "'IBM Plex Mono', monospace", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none", textAlign: "center", letterSpacing: 6 }}
+                        />
+                        {error && <div style={{ fontSize: 12, color: DEBIT }}>{error}</div>}
+                        <button type="submit" style={{ padding: "10px 18px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Unlock</button>
+                    </form>
+                    <div style={{ marginTop: 12, textAlign: "center" }}>
+                        <button onClick={onForgot} style={{ background: "none", border: "none", color: "#8A8470", textDecoration: "underline", cursor: "pointer", fontSize: 11.5 }}>Forgot PIN? Reset</button>
+                    </div>
+                </div>
+            );
+        }
+
+        function SetPinScreen({ error, onSave, initialSeconds }) {
+            const [p, setP] = useState("");
+            const [c, setC] = useState("");
+            const [secs, setSecs] = useState(initialSeconds || 60);
+            const submit = (e) => {
+                e.preventDefault();
+                onSave(p, c, secs);
+            };
+            return (
+                <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", background: PAPER, border: `1px solid ${RULE}`, borderRadius: 2, padding: 32, color: TEXT, maxWidth: 400, width: "100%" }}>
+                    <div style={{ fontSize: 11, letterSpacing: 1.5, color: "#6B6555" }}>Rehman &middot; Personal Ledger</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>🔐 PIN set karo</div>
+                    <p style={{ fontSize: 12.5, color: "#4A4636", marginTop: 8, lineHeight: 1.5 }}>
+                        Jaise hi ye link khulega, pehle PIN maanga jayega. Timer ke baad app khud lock ho jayegi (30 sec se 5 min tak).
+                    </p>
+                    <form onSubmit={submit} style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                        <input
+                            type="password"
+                            inputMode="numeric"
+                            autoFocus
+                            value={p}
+                            onChange={(e) => setP(e.target.value)}
+                            placeholder="Naya PIN (4+ digits, sirf numbers)"
+                            style={{ padding: "10px 12px", fontSize: 16, fontFamily: "'IBM Plex Mono', monospace", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none", textAlign: "center", letterSpacing: 4 }}
+                        />
+                        <input
+                            type="password"
+                            inputMode="numeric"
+                            value={c}
+                            onChange={(e) => setC(e.target.value)}
+                            placeholder="PIN dobara likho"
+                            style={{ padding: "10px 12px", fontSize: 16, fontFamily: "'IBM Plex Mono', monospace", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", color: TEXT, outline: "none", textAlign: "center", letterSpacing: 4 }}
+                        />
+                        <label style={{ fontSize: 12, color: "#6B6555", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            Auto-lock timer:
+                            <select
+                                value={secs}
+                                onChange={(e) => setSecs(Number(e.target.value))}
+                                style={{ padding: "6px 8px", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", fontSize: 12 }}
+                            >
+                                <option value={30}>30 sec</option>
+                                <option value={60}>1 min</option>
+                                <option value={120}>2 min</option>
+                                <option value={180}>3 min</option>
+                                <option value={300}>5 min</option>
+                            </select>
+                        </label>
+                        {error && <div style={{ fontSize: 12, color: DEBIT }}>{error}</div>}
+                        <button type="submit" style={{ padding: "10px 18px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Save PIN</button>
+                    </form>
+                </div>
+            );
         }
 
         // ---------- Main App ----------
@@ -367,9 +466,87 @@
             const [tab, setTab] = useState("overview");
             const [status, setStatus] = useState("idle");
             const [showMonthPicker, setShowMonthPicker] = useState(false);
+            const [hideAmounts, setHideAmounts] = useState(() => {
+                const saved = localStorage.getItem("ledger-hide-amounts-v1");
+                return saved === null ? true : saved === "1"; // hidden by default
+            });
 
             const saveTimer = useRef(null);
             const skipNextSave = useRef(false);
+
+            // Remember the show/hide amounts preference
+            useEffect(() => {
+                localStorage.setItem("ledger-hide-amounts-v1", hideAmounts ? "1" : "0");
+            }, [hideAmounts]);
+
+            // ---------- PIN lock ----------
+            const [pin, setPin] = useState(() => localStorage.getItem("ledger-pin-v1") || "");
+            const [isLocked, setIsLocked] = useState(() => Boolean(localStorage.getItem("ledger-pin-v1")));
+            const [pinError, setPinError] = useState("");
+            const [lockSeconds, setLockSeconds] = useState(() => {
+                const s = Number(localStorage.getItem("ledger-lock-seconds-v1"));
+                return s >= 30 && s <= 300 ? s : 60;
+            });
+            const lastActivity = useRef(Date.now());
+
+            const savePin = (p, c, secs) => {
+                const clean = String(p || "").trim();
+                if (clean.length < 4 || !/^\d+$/.test(clean)) {
+                    setPinError("PIN kam se kam 4 digits ka hona chahiye — sirf numbers.");
+                    return;
+                }
+                if (clean !== String(c || "").trim()) {
+                    setPinError("Dono PIN match nahi kar rahe — dobara likho.");
+                    return;
+                }
+                localStorage.setItem("ledger-pin-v1", clean);
+                localStorage.setItem("ledger-lock-seconds-v1", String(secs));
+                setLockSeconds(secs);
+                setPin(clean);
+                setPinError("");
+                setIsLocked(false);
+                lastActivity.current = Date.now();
+            };
+
+            const tryUnlock = (value) => {
+                if (String(value || "").trim() === pin) {
+                    setIsLocked(false);
+                    setPinError("");
+                    lastActivity.current = Date.now();
+                } else {
+                    setPinError("Galat PIN — dobara try karo.");
+                }
+            };
+
+            const resetPin = () => {
+                localStorage.removeItem("ledger-pin-v1");
+                setPin("");
+                setPinError("");
+                setIsLocked(false);
+            };
+
+            // Auto-lock after the chosen idle time (30s – 5min)
+            useEffect(() => {
+                if (!pin || isLocked) return;
+                const bump = () => { lastActivity.current = Date.now(); };
+                const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
+                events.forEach((ev) => window.addEventListener(ev, bump));
+                const onVis = () => {
+                    if (document.visibilityState === "visible") {
+                        if (Date.now() - lastActivity.current >= lockSeconds * 1000) setIsLocked(true);
+                        else lastActivity.current = Date.now();
+                    }
+                };
+                document.addEventListener("visibilitychange", onVis);
+                const iv = setInterval(() => {
+                    if (Date.now() - lastActivity.current >= lockSeconds * 1000) setIsLocked(true);
+                }, 1000);
+                return () => {
+                    events.forEach((ev) => window.removeEventListener(ev, bump));
+                    document.removeEventListener("visibilitychange", onVis);
+                    clearInterval(iv);
+                };
+            }, [pin, isLocked, lockSeconds]);
 
             // Load saved URL
             useEffect(() => {
@@ -383,6 +560,7 @@
             // Load month data
             const loadMonth = useCallback(async (baseUrl, mk) => {
                 setStatus("loading");
+                setUrlError("");
                 try {
                     const json = await fetchMonth(baseUrl, mk);
                     skipNextSave.current = true;
@@ -465,6 +643,23 @@
                 setUrlError("");
             };
 
+            // ---- PIN screens come first (before even the connect screen) ----
+            if (!pin) {
+                return (
+                    <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", background: PAPER, minHeight: 420, display: "flex", justifyContent: "center", alignItems: "flex-start", padding: "40px 16px" }}>
+                        <SetPinScreen error={pinError} onSave={savePin} initialSeconds={lockSeconds} />
+                    </div>
+                );
+            }
+
+            if (isLocked) {
+                return (
+                    <div style={{ fontFamily: "'Source Serif 4', Georgia, serif", background: PAPER, minHeight: 420, display: "flex", justifyContent: "center", alignItems: "flex-start", padding: "40px 16px" }}>
+                        <LockedScreen error={pinError} onUnlock={tryUnlock} onForgot={resetPin} />
+                    </div>
+                );
+            }
+
             // ---- setup screen ----
             if (!url) {
                 return (
@@ -506,12 +701,31 @@
             if (!data) {
                 return (
                     <div style={{ padding: 40, fontFamily: "'Source Serif 4', serif", color: TEXT, background: PAPER, border: `1px solid ${RULE}` }}>
-                        {status === "offline" ? "Couldn't reach the Sheet — check your connection." : "Opening the ledger…"}
+                        {status === "offline" ? (
+                            <div>
+                                <div style={{ fontSize: 14, fontWeight: 700 }}>Couldn't reach the Sheet</div>
+                                <div style={{ fontSize: 12.5, color: DEBIT, marginTop: 6, lineHeight: 1.5 }}>{urlError || "check your connection"}</div>
+                                <button
+                                    onClick={() => loadMonth(url, monthKey)}
+                                    style={{ marginTop: 14, padding: "8px 16px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                                >
+                                    Retry
+                                </button>
+                            </div>
+                        ) : (
+                            <div>
+                                <div>Opening the ledger…</div>
+                                <div style={{ fontSize: 11.5, color: "#8A8470", marginTop: 8 }}>
+                                    Sheet se data aa raha hai — pehli baar me 5-10 second lag sakte hain.
+                                </div>
+                            </div>
+                        )}
                     </div>
                 );
             }
 
             const sum = (arr, key) => arr.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+            const amt = (n) => (hideAmounts ? "****" : inr(n));
             const totalFixed = sum(data.fixed, "amount");
             const totalVariable = sum(data.variable, "amount");
             const totalOutgo = totalFixed + totalVariable;
@@ -606,6 +820,9 @@
                                 {(status === "offline" || status === "error") && <IconComponent name="CloudOff" size={11} />}
                                 {statusLabel}
                             </div>
+                            <button onClick={() => setHideAmounts((h) => !h)} style={{ background: "none", border: "none", color: PAPER, opacity: 0.7, cursor: "pointer", padding: 4 }} aria-label={hideAmounts ? "Show amounts" : "Hide amounts"} title={hideAmounts ? "Show amounts" : "Hide amounts"}>
+                                <IconComponent name={hideAmounts ? "EyeOff" : "Eye"} size={15} />
+                            </button>
                             <button onClick={() => { setUrlDraft(url);
                                 setShowSettings(true); }} style={{ background: "none", border: "none", color: PAPER, opacity: 0.7, cursor: "pointer", padding: 4 }} aria-label="Settings">
                                 <IconComponent name="Settings" size={15} />
@@ -627,6 +844,46 @@
                             <button onClick={connect} style={{ padding: "7px 14px", background: INK, color: PAPER, border: "none", borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Save URL</button>
                             <button onClick={disconnect} style={{ padding: "7px 14px", background: "none", color: DEBIT, border: `1px solid ${DEBIT}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Disconnect</button>
                             <button onClick={() => setShowSettings(false)} style={{ padding: "7px 14px", background: "none", color: TEXT, border: `1px solid ${RULE}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Close</button>
+                            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${RULE}`, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", width: "100%" }}>
+                                <label style={{ fontSize: 12, color: "#6B6555", display: "flex", alignItems: "center", gap: 6 }}>
+                                    Auto-lock:
+                                    <select
+                                        value={lockSeconds}
+                                        onChange={(e) => {
+                                            const v = Number(e.target.value);
+                                            setLockSeconds(v);
+                                            localStorage.setItem("ledger-lock-seconds-v1", String(v));
+                                            lastActivity.current = Date.now();
+                                        }}
+                                        style={{ padding: "6px 8px", border: `1px solid ${RULE}`, borderRadius: 3, background: "#fff", fontSize: 12 }}
+                                    >
+                                        <option value={30}>30 sec</option>
+                                        <option value={60}>1 min</option>
+                                        <option value={120}>2 min</option>
+                                        <option value={180}>3 min</option>
+                                        <option value={300}>5 min</option>
+                                    </select>
+                                </label>
+                                <button onClick={() => setIsLocked(true)} style={{ padding: "7px 14px", background: "none", color: INK, border: `1px solid ${RULE}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Lock now</button>
+                                <button onClick={() => {
+                                    const np = window.prompt("Naya PIN (4+ digits, sirf numbers):");
+                                    if (np === null) return;
+                                    const clean = np.trim();
+                                    if (/^\d{4,}$/.test(clean)) {
+                                        localStorage.setItem("ledger-pin-v1", clean);
+                                        setPin(clean);
+                                        setPinError("");
+                                        lastActivity.current = Date.now();
+                                    } else {
+                                        window.alert("PIN 4+ digits ka hona chahiye — sirf numbers.");
+                                    }
+                                }} style={{ padding: "7px 14px", background: "none", color: INK, border: `1px solid ${RULE}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Change PIN</button>
+                                <button onClick={() => {
+                                    if (window.confirm("PIN remove karna hai? Phir koi bhi bina PIN ke open kar sakega.")) {
+                                        resetPin();
+                                    }
+                                }} style={{ padding: "7px 14px", background: "none", color: DEBIT, border: `1px solid ${DEBIT}`, borderRadius: 3, fontSize: 12.5, cursor: "pointer" }}>Remove PIN</button>
+                            </div>
                         </div>
                     )}
 
@@ -664,12 +921,16 @@
                                 <Field label="MONTHLY SALARY (IN-HAND)">
                                     <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 4 }}>
                                         <IconComponent name="IndianRupee" size={18} />
-                                        <input
-                                            type="number"
-                                            value={data.salary}
-                                            onChange={(e) => update({ salary: Number(e.target.value) || 0 })}
-                                            style={{ fontSize: 26, fontWeight: 700, border: "none", background: "transparent", fontFamily: "'IBM Plex Mono', monospace", color: INK, outline: "none", width: 200 }}
-                                        />
+                                        {hideAmounts ? (
+                                            <span style={{ fontSize: 26, fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace", color: INK }}>****</span>
+                                        ) : (
+                                            <input
+                                                type="number"
+                                                value={data.salary}
+                                                onChange={(e) => update({ salary: Number(e.target.value) || 0 })}
+                                                style={{ fontSize: 26, fontWeight: 700, border: "none", background: "transparent", fontFamily: "'IBM Plex Mono', monospace", color: INK, outline: "none", width: 200 }}
+                                            />
+                                        )}
                                     </div>
                                 </Field>
 
@@ -683,7 +944,7 @@
                                             </RowShell>
                                         ))}
                                         <AddButton onClick={() => addRow("fixed", { name: "New item", amount: 0 })}>Add fixed item</AddButton>
-                                        <SectionTotal label="Total fixed" value={totalFixed} tone={DEBIT} />
+                                        <SectionTotal label="Total fixed" value={totalFixed} tone={DEBIT} hidden={hideAmounts} />
                                     </div>
                                     <div>
                                         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Variable / household</div>
@@ -694,17 +955,17 @@
                                             </RowShell>
                                         ))}
                                         <AddButton onClick={() => addRow("variable", { name: "New item", amount: 0 })}>Add variable item</AddButton>
-                                        <SectionTotal label="Total variable" value={totalVariable} tone={DEBIT} />
+                                        <SectionTotal label="Total variable" value={totalVariable} tone={DEBIT} hidden={hideAmounts} />
                                     </div>
                                 </div>
 
                                 <div className="surplus-bar" style={{ marginTop: 26, padding: "16px 20px", background: PAPER_DARK, borderRadius: 3, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                     <div>
-                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Total outgo {inr(totalOutgo)} &middot; Salary {inr(data.salary)}</div>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Total outgo {amt(totalOutgo)} &middot; Salary {amt(data.salary)}</div>
                                         <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>Monthly surplus</div>
                                     </div>
                                     <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 24, fontWeight: 700, color: surplus >= 0 ? CREDIT : DEBIT }}>
-                                        {inr(surplus)}
+                                        {amt(surplus)}
                                     </div>
                                 </div>
                             </div>
@@ -714,17 +975,25 @@
                             <div>
                                 <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
                                     <Field label="BANK BALANCE — OPENING THIS MONTH">
-                                        <NumberCellStandalone value={data.openingBalance} onChange={(v) => update({ openingBalance: v })} />
+                                        {hideAmounts ? (
+                                            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 20, fontWeight: 700, color: INK }}>****</span>
+                                        ) : (
+                                            <NumberCellStandalone value={data.openingBalance} onChange={(v) => update({ openingBalance: v })} />
+                                        )}
                                     </Field>
                                     <Field label="MINIMUM BALANCE TO KEEP">
-                                        <NumberCellStandalone value={data.minBalance} onChange={(v) => update({ minBalance: v })} />
+                                        {hideAmounts ? (
+                                            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 20, fontWeight: 700, color: INK }}>****</span>
+                                        ) : (
+                                            <NumberCellStandalone value={data.minBalance} onChange={(v) => update({ minBalance: v })} />
+                                        )}
                                     </Field>
                                 </div>
 
                                 {data.alreadyDeducted && data.alreadyDeducted.length > 0 && (
                                     <div style={{ marginTop: 20, fontSize: 12, color: "#6B6555", fontStyle: "italic" }}>
                                         Already deducted this month (reference only, already inside the balance above): {" "}
-                                        {data.alreadyDeducted.map((a) => a.name).join(", ")} = {inr(totalAlready)}
+                                        {data.alreadyDeducted.map((a) => a.name).join(", ")} = {amt(totalAlready)}
                                     </div>
                                 )}
 
@@ -739,7 +1008,7 @@
                                             <TextCell value={e.name} onChange={(v) => updateRow("expenses", e.id, { name: v })} />
                                             <NumberCell value={e.planned} onChange={(v) => updateRow("expenses", e.id, { planned: v })} />
                                             <NumberCell value={e.actual} placeholder="—" onChange={(v) => updateRow("expenses", e.id, { actual: v })} tone={DEBIT} />
-                                            <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>{inr(e.balanceAfter)}</span>
+                                            <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>{amt(e.balanceAfter)}</span>
                                             <button onClick={() => removeRow("expenses", e.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                                             </button>
@@ -751,16 +1020,16 @@
                                 <div className="cards-row" style={{ marginTop: 22, display: "flex", gap: 16 }}>
                                     <div style={{ flex: 1, padding: "14px 18px", background: PAPER_DARK, borderRadius: 3 }}>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Projected closing balance (actual)</div>
-                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : TEXT }}>{inr(actualBalance)}</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : TEXT }}>{amt(actualBalance)}</div>
                                         <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>
                                             {totalMisc > 0
-                                                ? <>Planned bills + {inr(totalMisc)} misc spends — this is what carries to next month.</>
+                                                ? <>Planned bills + {amt(totalMisc)} misc spends — this is what carries to next month.</>
                                                 : "This becomes next month's opening balance automatically."}
                                         </div>
                                     </div>
                                     <div style={{ flex: 1, padding: "14px 18px", background: actualBuffer < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2 }}>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Buffer above minimum</div>
-                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: actualBuffer < 0 ? DEBIT : CREDIT }}>{inr(actualBuffer)}</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: actualBuffer < 0 ? DEBIT : CREDIT }}>{amt(actualBuffer)}</div>
                                         {actualBuffer < 0 && (
                                             <div style={{ display: "flex", gap: 5, alignItems: "center", fontSize: 11, color: DEBIT, marginTop: 2 }}>
                                                 <IconComponent name="AlertTriangle" size={12} /> below minimum — hold off on wishlist / CC spend
@@ -774,7 +1043,7 @@
                         {tab === "wishlist" && (
                             <div>
                                 <div style={{ fontSize: 12, color: "#6B6555", marginBottom: 14 }}>
-                                    Monthly surplus available: <strong style={{ color: CREDIT }}>{inr(surplus)}</strong> — health items are worth funding first.
+                                    Monthly surplus available: <strong style={{ color: CREDIT }}>{amt(surplus)}</strong> — health items are worth funding first.
                                 </div>
                                 <div className="wishlist-grid" style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
                                     <span>Item</span><span style={{ textAlign: "right" }}>Cost</span><span>Priority</span><span style={{ textAlign: "right" }}>Saved</span><span style={{ textAlign: "right" }}>Needed</span><span />
@@ -795,7 +1064,7 @@
                                                 <option>Low</option>
                                             </select>
                                             <NumberCell value={w.saved} onChange={(v) => updateRow("wishlist", w.id, { saved: v })} />
-                                            <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: DEBIT }}>{inr(needed)}</span>
+                                            <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: DEBIT }}>{amt(needed)}</span>
                                             <button onClick={() => removeRow("wishlist", w.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                                             </button>
@@ -803,7 +1072,7 @@
                                     );
                                 })}
                                 <AddButton onClick={() => addRow("wishlist", { name: "New item", cost: "", priority: "Medium", saved: 0 })}>Add wishlist item</AddButton>
-                                <SectionTotal label="Total still needed" value={wishlistTotalNeeded} tone={DEBIT} />
+                                <SectionTotal label="Total still needed" value={wishlistTotalNeeded} tone={DEBIT} hidden={hideAmounts} />
                                 {surplus > 0 && wishlistTotalNeeded > 0 && (
                                     <div style={{ marginTop: 8, fontSize: 12, color: "#6B6555" }}>
                                         At the full surplus, that's about {Math.ceil(wishlistTotalNeeded / surplus)} month(s) to save it all.
@@ -835,24 +1104,24 @@
                                         <DateInput value={m.date} onChange={(v) => updateRow("misc", m.id, { date: v })} />
                                         <TextCell value={m.name} onChange={(v) => updateRow("misc", m.id, { name: v })} placeholder="kya kharcha hua?" />
                                         <NumberCell value={m.amount} placeholder="0" onChange={(v) => updateRow("misc", m.id, { amount: v })} tone={DEBIT} />
-                                        <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: m.balanceAfter < 0 ? DEBIT : TEXT }}>{inr(m.balanceAfter)}</span>
+                                        <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: m.balanceAfter < 0 ? DEBIT : TEXT }}>{amt(m.balanceAfter)}</span>
                                         <button onClick={() => removeRow("misc", m.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                                         </button>
                                     </div>
                                 ))}
                                 <AddButton onClick={() => addRow("misc", { date: todayText(), name: "", amount: "" })}>Add spend</AddButton>
-                                {totalMisc > 0 && <SectionTotal label="Total misc spent" value={totalMisc} tone={DEBIT} />}
+                                {totalMisc > 0 && <SectionTotal label="Total misc spent" value={totalMisc} tone={DEBIT} hidden={hideAmounts} />}
 
                                 <div className="cards-row" style={{ marginTop: 22, display: "flex", gap: 16 }}>
                                     <div style={{ flex: 1, padding: "14px 18px", background: actualBalance < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3 }}>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Actual balance now (after misc spends)</div>
-                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 26, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : CREDIT }}>{inr(actualBalance)}</div>
-                                        <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>Starts at {inr(closingBalance)} after planned bills.</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 26, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : CREDIT }}>{amt(actualBalance)}</div>
+                                        <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>Starts at {amt(closingBalance)} after planned bills.</div>
                                     </div>
                                     <div style={{ flex: 1, padding: "14px 18px", background: actualBuffer < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2 }}>
-                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Buffer above minimum ({inr(data.minBalance)})</div>
-                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: actualBuffer < 0 ? DEBIT : CREDIT }}>{inr(actualBuffer)}</div>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Buffer above minimum ({amt(data.minBalance)})</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: actualBuffer < 0 ? DEBIT : CREDIT }}>{amt(actualBuffer)}</div>
                                         {actualBuffer < 0 && (
                                             <div style={{ display: "flex", gap: 5, alignItems: "center", fontSize: 11, color: DEBIT, marginTop: 2 }}>
                                                 <IconComponent name="AlertTriangle" size={12} /> below minimum — hold off on more spend
@@ -901,13 +1170,14 @@
                                 {data.fixed.filter((r) => /sip|lic/i.test(r.name)).map((r) => (
                                     <div key={r.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
                                         <span>{r.name}</span>
-                                        <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{inr(r.amount)} / month</span>
+                                        <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{amt(r.amount)} / month</span>
                                     </div>
                                 ))}
                                 <SectionTotal
                                     label="Total long-term savings"
                                     value={sum(data.fixed.filter((r) => /sip|lic/i.test(r.name)), "amount")}
                                     tone={CREDIT}
+                                    hidden={hideAmounts}
                                 />
                                 <div style={{ marginTop: 6, fontSize: 12, color: "#6B6555" }}>
                                     {((sum(data.fixed.filter((r) => /sip|lic/i.test(r.name)), "amount") / (data.salary || 1)) * 100).toFixed(1)}% of salary
