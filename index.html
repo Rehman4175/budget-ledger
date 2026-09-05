@@ -295,9 +295,9 @@
             );
         }
 
-        function RowShell({ children, onRemove }) {
+        function RowShell({ children, onRemove, dragProps }) {
             return (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 28px", gap: 10, alignItems: "center", padding: "6px 0" }}>
+                <div {...dragProps} style={{ display: "grid", gridTemplateColumns: "1fr 105px 70px 28px", gap: 10, alignItems: "center", padding: "6px 0", cursor: "grab", ...(dragProps && dragProps.style) }} title="Drag to reorder">
                     {children}
                     <button onClick={onRemove} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282", padding: 4 }} aria-label="Remove row">
                         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
@@ -611,6 +611,8 @@
             const saveTimer = useRef(null);
             const skipNextSave = useRef(false);
             const pendingSave = useRef(null);
+            const draggedRow = useRef(null);
+            const [dragging, setDragging] = useState(null);
 
             // A network request can fail after the user has already edited the page.
             // This separate draft marks data that has not reached the Sheet yet and
@@ -998,7 +1000,15 @@
             // marked Paid reduce it.  Unpaid entries remain in the projection.
             let running = Number(data.openingBalance) || 0;
             let projectedRunning = running;
-            const expenseRows = data.expenses.map((e) => {
+            // Paid overview items are automatically shown in the statement. They
+            // are derived instead of copied, so changing back to Unpaid removes
+            // them immediately and cannot create duplicate transactions.
+            const overviewPaidEntries = [
+                ...(data.fixed || []).map((r) => ({ id: "overview-fixed-" + r.id, sourceList: "fixed", sourceId: r.id, date: "", name: r.name, planned: r.amount, actual: "", paid: r.paid === true })),
+                ...(data.variable || []).map((r) => ({ id: "overview-variable-" + r.id, sourceList: "variable", sourceId: r.id, date: "", name: r.name, planned: r.amount, actual: "", paid: r.paid === true })),
+            ].filter((r) => r.paid);
+            const balanceEntries = [...overviewPaidEntries, ...(data.expenses || [])];
+            const expenseRows = balanceEntries.map((e) => {
                 // Old saved months did not have `paid`; an entered actual amount
                 // is treated as paid so their historical balance stays correct.
                 const paid = e.paid === true || (e.paid === undefined && e.actual !== "" && e.actual !== undefined && e.actual !== null);
@@ -1031,6 +1041,49 @@
                 update({ [listKey]: data[listKey].map((r) => (r.id === id ? { ...r, ...patch } : r)) });
             const removeRow = (listKey, id) => update({ [listKey]: data[listKey].filter((r) => r.id !== id) });
             const addRow = (listKey, row) => update({ [listKey]: [...(data[listKey] || []), { id: uid(), ...row }] });
+            const updateBalanceRow = (entry, patch) => {
+                if (entry.sourceList) {
+                    // Overview-generated rows only need their Paid state changed;
+                    // name and amount are edited in Overview itself.
+                    if (Object.prototype.hasOwnProperty.call(patch, "paid")) updateRow(entry.sourceList, entry.sourceId, { paid: patch.paid });
+                    return;
+                }
+                updateRow("expenses", entry.id, patch);
+            };
+            const removeBalanceRow = (entry) => {
+                if (entry.sourceList) updateRow(entry.sourceList, entry.sourceId, { paid: false });
+                else removeRow("expenses", entry.id);
+            };
+            const moveRow = (listKey, fromId, toId) => {
+                if (fromId === toId) return;
+                const rows = [...(data[listKey] || [])];
+                const from = rows.findIndex((r) => r.id === fromId);
+                const to = rows.findIndex((r) => r.id === toId);
+                if (from < 0 || to < 0) return;
+                const [row] = rows.splice(from, 1);
+                rows.splice(to, 0, row);
+                update({ [listKey]: rows });
+            };
+            const dragProps = (listKey, id) => ({
+                draggable: true,
+                onDragStart: (e) => {
+                    draggedRow.current = { listKey, id };
+                    setDragging(id);
+                    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+                },
+                onDragOver: (e) => {
+                    if (draggedRow.current && draggedRow.current.listKey === listKey) e.preventDefault();
+                },
+                onDrop: (e) => {
+                    e.preventDefault();
+                    const source = draggedRow.current;
+                    if (source && source.listKey === listKey) moveRow(listKey, source.id, id);
+                    draggedRow.current = null;
+                    setDragging(null);
+                },
+                onDragEnd: () => { draggedRow.current = null; setDragging(null); },
+                style: dragging === id ? { opacity: 0.45 } : undefined,
+            });
 
             const monthOptions = Array.from(new Set([...(months || []), currentMonthKey()])).sort((a, b) => {
                 const [ma, ya] = a.split("-");
@@ -1207,23 +1260,25 @@
                                     <div>
                                         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Fixed commitments</div>
                                         {data.fixed.map((r) => (
-                                            <RowShell key={r.id} onRemove={() => removeRow("fixed", r.id)}>
+                                            <RowShell key={r.id} onRemove={() => removeRow("fixed", r.id)} dragProps={dragProps("fixed", r.id)}>
                                                 <TextCell value={r.name} onChange={(v) => updateRow("fixed", r.id, { name: v })} />
                                                 <NumberCell value={r.amount} onChange={(v) => updateRow("fixed", r.id, { amount: v })} tone={DEBIT} />
+                                                <select value={r.paid ? "paid" : "unpaid"} onChange={(e) => updateRow("fixed", r.id, { paid: e.target.value === "paid" })} style={{ padding: "5px 2px", border: `1px solid ${r.paid ? CREDIT : RULE}`, borderRadius: 3, background: r.paid ? "#E1EEE7" : "#fff", color: r.paid ? CREDIT : TEXT, fontSize: 11 }}><option value="unpaid">Unpaid</option><option value="paid">Paid</option></select>
                                             </RowShell>
                                         ))}
-                                        <AddButton onClick={() => addRow("fixed", { name: "New item", amount: 0 })}>Add fixed item</AddButton>
+                                        <AddButton onClick={() => addRow("fixed", { name: "New item", amount: 0, paid: false })}>Add fixed item</AddButton>
                                         <SectionTotal label="Total fixed" value={totalFixed} tone={DEBIT} hidden={hideAmounts} />
                                     </div>
                                     <div>
                                         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Variable / household</div>
                                         {data.variable.map((r) => (
-                                            <RowShell key={r.id} onRemove={() => removeRow("variable", r.id)}>
+                                            <RowShell key={r.id} onRemove={() => removeRow("variable", r.id)} dragProps={dragProps("variable", r.id)}>
                                                 <TextCell value={r.name} onChange={(v) => updateRow("variable", r.id, { name: v })} />
                                                 <NumberCell value={r.amount} onChange={(v) => updateRow("variable", r.id, { amount: v })} tone={DEBIT} />
+                                                <select value={r.paid ? "paid" : "unpaid"} onChange={(e) => updateRow("variable", r.id, { paid: e.target.value === "paid" })} style={{ padding: "5px 2px", border: `1px solid ${r.paid ? CREDIT : RULE}`, borderRadius: 3, background: r.paid ? "#E1EEE7" : "#fff", color: r.paid ? CREDIT : TEXT, fontSize: 11 }}><option value="unpaid">Unpaid</option><option value="paid">Paid</option></select>
                                             </RowShell>
                                         ))}
-                                        <AddButton onClick={() => addRow("variable", { name: "New item", amount: 0 })}>Add variable item</AddButton>
+                                        <AddButton onClick={() => addRow("variable", { name: "New item", amount: 0, paid: false })}>Add variable item</AddButton>
                                         <SectionTotal label="Total variable" value={totalVariable} tone={DEBIT} hidden={hideAmounts} />
                                     </div>
                                 </div>
@@ -1273,16 +1328,16 @@
                                         <span>Date</span><span>Item</span><span style={{ textAlign: "right" }}>Planned</span><span style={{ textAlign: "right" }}>Paid amt.</span><span>Status</span><span style={{ textAlign: "right" }}>Bank balance</span><span />
                                     </div>
                                     {expenseRows.map((e) => (
-                                        <div key={e.id} className="expense-grid" style={{ display: "grid", gridTemplateColumns: "70px 1fr 78px 78px 70px 100px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
-                                            <DateInput value={e.date} onChange={(v) => updateRow("expenses", e.id, { date: v })} />
-                                            <TextCell value={e.name} onChange={(v) => updateRow("expenses", e.id, { name: v })} />
-                                            <NumberCell value={e.planned} onChange={(v) => updateRow("expenses", e.id, { planned: v })} />
-                                            <NumberCell value={e.actual} placeholder="—" onChange={(v) => updateRow("expenses", e.id, { actual: v })} tone={DEBIT} />
-                                            <select value={e.paid ? "paid" : "unpaid"} onChange={(ev) => updateRow("expenses", e.id, { paid: ev.target.value === "paid" })} style={{ padding: "5px 2px", border: `1px solid ${e.paid ? CREDIT : RULE}`, borderRadius: 3, background: e.paid ? "#E1EEE7" : "#fff", color: e.paid ? CREDIT : TEXT, fontSize: 11 }}>
+                                        <div key={e.id} {...dragProps(e.sourceList || "expenses", e.sourceId || e.id)} className="expense-grid" title="Drag to reorder" style={{ display: "grid", gridTemplateColumns: "70px 1fr 78px 78px 70px 100px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}`, cursor: "grab", ...(dragProps(e.sourceList || "expenses", e.sourceId || e.id).style) }}>
+                                            <DateInput value={e.date} onChange={(v) => updateBalanceRow(e, { date: v })} />
+                                            <TextCell value={e.name} onChange={(v) => updateBalanceRow(e, { name: v })} />
+                                            <NumberCell value={e.planned} onChange={(v) => updateBalanceRow(e, { planned: v })} />
+                                            <NumberCell value={e.actual} placeholder="—" onChange={(v) => updateBalanceRow(e, { actual: v })} tone={DEBIT} />
+                                            <select value={e.paid ? "paid" : "unpaid"} onChange={(ev) => updateBalanceRow(e, { paid: ev.target.value === "paid" })} style={{ padding: "5px 2px", border: `1px solid ${e.paid ? CREDIT : RULE}`, borderRadius: 3, background: e.paid ? "#E1EEE7" : "#fff", color: e.paid ? CREDIT : TEXT, fontSize: 11 }}>
                                                 <option value="unpaid">Unpaid</option><option value="paid">Paid</option>
                                             </select>
                                             <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: e.paid ? TEXT : "#8A8470" }}>{amt(e.balanceAfter)}</span>
-                                            <button onClick={() => removeRow("expenses", e.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
+                                            <button onClick={() => removeBalanceRow(e)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                                             </button>
                                         </div>
@@ -1324,7 +1379,7 @@
                                 {data.wishlist.map((w) => {
                                     const needed = Math.max((Number(w.cost) || 0) - (Number(w.saved) || 0), 0);
                                     return (
-                                        <div key={w.id} className="wishlist-grid" style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
+                                        <div key={w.id} {...dragProps("wishlist", w.id)} className="wishlist-grid" title="Drag to reorder" style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 90px 90px 28px", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${RULE}`, cursor: "grab", ...(dragProps("wishlist", w.id).style) }}>
                                             <TextCell value={w.name} onChange={(v) => updateRow("wishlist", w.id, { name: v })} />
                                             <NumberCell value={w.cost} placeholder="—" onChange={(v) => updateRow("wishlist", w.id, { cost: v })} />
                                             <select
@@ -1373,7 +1428,7 @@
                                     </div>
                                 )}
                                 {miscRows.map((m) => (
-                                    <div key={m.id} className="misc-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
+                                    <div key={m.id} {...dragProps("misc", m.id)} className="misc-grid" title="Drag to reorder" style={{ display: "grid", gridTemplateColumns: "84px 1fr 90px 110px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}`, cursor: "grab", ...(dragProps("misc", m.id).style) }}>
                                         <DateInput value={m.date} onChange={(v) => updateRow("misc", m.id, { date: v })} />
                                         <TextCell value={m.name} onChange={(v) => updateRow("misc", m.id, { name: v })} placeholder="what was it for?" />
                                         <NumberCell value={m.amount} placeholder="0" onChange={(v) => updateRow("misc", m.id, { amount: v })} tone={DEBIT} />
@@ -1420,7 +1475,7 @@
                                     </div>
                                 )}
                                 {notes.map((n) => (
-                                    <div key={n.id} className="notes-grid" style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, alignItems: "start", padding: "6px 0", borderBottom: `1px solid ${RULE}` }}>
+                                    <div key={n.id} {...dragProps("notes", n.id)} className="notes-grid" title="Drag to reorder" style={{ display: "grid", gridTemplateColumns: "84px 1fr 28px", gap: 8, alignItems: "start", padding: "6px 0", borderBottom: `1px solid ${RULE}`, cursor: "grab", ...(dragProps("notes", n.id).style) }}>
                                         <DateInput value={n.date} onChange={(v) => updateRow("notes", n.id, { date: v })} />
                                         <textarea
                                             value={n.text || ""}
