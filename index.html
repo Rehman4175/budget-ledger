@@ -994,16 +994,23 @@
             const surplus = data.salary - totalOutgo;
             const totalAlready = sum(data.alreadyDeducted, "amount");
 
+            // Bank balance is a statement, not a budget forecast: only entries
+            // marked Paid reduce it.  Unpaid entries remain in the projection.
             let running = Number(data.openingBalance) || 0;
+            let projectedRunning = running;
             const expenseRows = data.expenses.map((e) => {
-                const used = e.actual === "" || e.actual === undefined ? Number(e.planned) || 0 : Number(e.actual) || 0;
-                running -= used;
-                return { ...e, used, balanceAfter: running };
+                // Old saved months did not have `paid`; an entered actual amount
+                // is treated as paid so their historical balance stays correct.
+                const paid = e.paid === true || (e.paid === undefined && e.actual !== "" && e.actual !== undefined && e.actual !== null);
+                const amount = e.actual === "" || e.actual === undefined || e.actual === null ? Number(e.planned) || 0 : Number(e.actual) || 0;
+                if (paid) running -= amount;
+                projectedRunning -= amount;
+                return { ...e, paid, amount, balanceAfter: running, projectedBalanceAfter: projectedRunning };
             });
-            const closingBalance = running;
-            const buffer = closingBalance - (Number(data.minBalance) || 0);
+            const currentBalanceBeforeMisc = running;
+            const projectedBalance = projectedRunning;
             const totalMisc = sum(data.misc || [], "amount");
-            let miscRunning = closingBalance;
+            let miscRunning = currentBalanceBeforeMisc;
             const miscRows = (data.misc || []).map((m) => {
                 const amt = Number(m.amount) || 0;
                 miscRunning -= amt;
@@ -1260,28 +1267,32 @@
                                 )}
 
                                 <div style={{ marginTop: 20 }}>
-                                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Upcoming expenses before next salary</div>
-                                    <div className="expense-grid" style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
-                                        <span>Date</span><span>Item</span><span style={{ textAlign: "right" }}>Planned</span><span style={{ textAlign: "right" }}>Actual</span><span style={{ textAlign: "right" }}>Balance</span><span />
+                                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Bills & payments before next salary</div>
+                                    <div style={{ fontSize: 11.5, color: "#6B6555", marginBottom: 8 }}>Only <strong>Paid</strong> entries reduce Current Bank Balance. Unpaid bills appear only in the projection.</div>
+                                    <div className="expense-grid" style={{ display: "grid", gridTemplateColumns: "70px 1fr 78px 78px 70px 100px 28px", gap: 8, fontSize: 11, color: "#6B6555", paddingBottom: 4, borderBottom: `1px solid ${RULE}` }}>
+                                        <span>Date</span><span>Item</span><span style={{ textAlign: "right" }}>Planned</span><span style={{ textAlign: "right" }}>Paid amt.</span><span>Status</span><span style={{ textAlign: "right" }}>Bank balance</span><span />
                                     </div>
                                     {expenseRows.map((e) => (
-                                        <div key={e.id} className="expense-grid" style={{ display: "grid", gridTemplateColumns: "70px 1fr 90px 90px 100px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
+                                        <div key={e.id} className="expense-grid" style={{ display: "grid", gridTemplateColumns: "70px 1fr 78px 78px 70px 100px 28px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${RULE}` }}>
                                             <DateInput value={e.date} onChange={(v) => updateRow("expenses", e.id, { date: v })} />
                                             <TextCell value={e.name} onChange={(v) => updateRow("expenses", e.id, { name: v })} />
                                             <NumberCell value={e.planned} onChange={(v) => updateRow("expenses", e.id, { planned: v })} />
                                             <NumberCell value={e.actual} placeholder="—" onChange={(v) => updateRow("expenses", e.id, { actual: v })} tone={DEBIT} />
-                                            <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>{amt(e.balanceAfter)}</span>
+                                            <select value={e.paid ? "paid" : "unpaid"} onChange={(ev) => updateRow("expenses", e.id, { paid: ev.target.value === "paid" })} style={{ padding: "5px 2px", border: `1px solid ${e.paid ? CREDIT : RULE}`, borderRadius: 3, background: e.paid ? "#E1EEE7" : "#fff", color: e.paid ? CREDIT : TEXT, fontSize: 11 }}>
+                                                <option value="unpaid">Unpaid</option><option value="paid">Paid</option>
+                                            </select>
+                                            <span style={{ textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: e.paid ? TEXT : "#8A8470" }}>{amt(e.balanceAfter)}</span>
                                             <button onClick={() => removeRow("expenses", e.id)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9A9282" }}>
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                                             </button>
                                         </div>
                                     ))}
-                                    <AddButton onClick={() => addRow("expenses", { date: "", name: "New expense", planned: 0, actual: "" })}>Add expense</AddButton>
+                                    <AddButton onClick={() => addRow("expenses", { date: "", name: "New expense", planned: 0, actual: "", paid: false })}>Add bill</AddButton>
                                 </div>
 
                                 <div className="cards-row" style={{ marginTop: 22, display: "flex", gap: 16 }}>
                                     <div style={{ flex: 1, padding: "14px 18px", background: PAPER_DARK, borderRadius: 3 }}>
-                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Projected closing balance (actual)</div>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Current bank balance</div>
                                         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : TEXT }}>{amt(actualBalance)}</div>
                                         <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>
                                             {totalMisc > 0
@@ -1290,8 +1301,8 @@
                                         </div>
                                     </div>
                                     <div style={{ flex: 1, padding: "14px 18px", background: actualBuffer < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2 }}>
-                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Buffer above minimum</div>
-                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: actualBuffer < 0 ? DEBIT : CREDIT }}>{amt(actualBuffer)}</div>
+                                        <div style={{ fontSize: 12, color: "#6B6555" }}>Projected after unpaid bills</div>
+                                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, fontWeight: 700, color: projectedBalance - totalMisc < 0 ? DEBIT : CREDIT }}>{amt(projectedBalance - totalMisc)}</div>
                                         {actualBuffer < 0 && (
                                             <div style={{ display: "flex", gap: 5, alignItems: "center", fontSize: 11, color: DEBIT, marginTop: 2 }}>
                                                 <IconComponent name="AlertTriangle" size={12} /> below minimum — hold off on wishlist / CC spend
@@ -1379,7 +1390,7 @@
                                     <div style={{ flex: 1, padding: "14px 18px", background: actualBalance < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3 }}>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Actual balance now (after misc spends)</div>
                                         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 26, fontWeight: 700, marginTop: 2, color: actualBalance < 0 ? DEBIT : CREDIT }}>{amt(actualBalance)}</div>
-                                        <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>Starts at {amt(closingBalance)} after planned bills.</div>
+                                        <div style={{ fontSize: 11, color: "#8A8470", marginTop: 2 }}>Starts at {amt(currentBalanceBeforeMisc)} after paid bills.</div>
                                     </div>
                                     <div style={{ flex: 1, padding: "14px 18px", background: actualBuffer < 0 ? "#F3DAD5" : PAPER_DARK, borderRadius: 3, display: "flex", flexDirection: "column", gap: 2 }}>
                                         <div style={{ fontSize: 12, color: "#6B6555" }}>Buffer above minimum ({amt(data.minBalance)})</div>
