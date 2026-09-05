@@ -612,6 +612,33 @@
             const skipNextSave = useRef(false);
             const pendingSave = useRef(null);
 
+            // A network request can fail after the user has already edited the page.
+            // This separate draft marks data that has not reached the Sheet yet and
+            // survives refreshes, closing the tab and browser restarts.
+            const cacheKeyFor = (mk) => "ledger-cache-v1-" + mk;
+            const draftKeyFor = (mk) => "ledger-offline-draft-v1-" + mk;
+            const readSavedCopy = (key) => {
+                try { return JSON.parse(localStorage.getItem(key) || "null"); }
+                catch (e) { return null; }
+            };
+            const saveLocalDraft = (mk, value) => {
+                const saved = { data: value, at: Date.now() };
+                try {
+                    // Updating both keys makes an offline reload show the newest edit.
+                    localStorage.setItem(cacheKeyFor(mk), JSON.stringify(saved));
+                    localStorage.setItem(draftKeyFor(mk), JSON.stringify(saved));
+                } catch (e) {
+                    console.error("Could not save offline draft:", e);
+                }
+            };
+            const clearDraftIfUnchanged = (mk, value) => {
+                const draft = readSavedCopy(draftKeyFor(mk));
+                // Do not erase a newer edit if an older request finishes late.
+                if (draft && JSON.stringify(draft.data) === JSON.stringify(value)) {
+                    try { localStorage.removeItem(draftKeyFor(mk)); } catch (e) {}
+                }
+            };
+
             // Remember the show/hide amounts preference
             useEffect(() => {
                 localStorage.setItem("ledger-hide-amounts-v1", hideAmounts ? "1" : "0");
@@ -724,28 +751,39 @@
             // Load month data
             const loadMonth = useCallback(async (baseUrl, mk) => {
                 // 1) Show a saved copy instantly — no network wait on the phone
-                const cacheKey = "ledger-cache-v1-" + mk;
-                let cached = null;
-                try { cached = JSON.parse(localStorage.getItem(cacheKey) || "null"); } catch (e) { cached = null; }
-                if (cached && cached.data) {
+                const cacheKey = cacheKeyFor(mk);
+                const cached = readSavedCopy(cacheKey);
+                const draft = readSavedCopy(draftKeyFor(mk));
+                // A local draft has not reached the Sheet, so it must win over
+                // both the cache and a successful fetch from the Sheet.
+                const localCopy = draft && draft.data ? draft : cached;
+                if (localCopy && localCopy.data) {
                     skipNextSave.current = true;
-                    setData(cached.data);
-                    setStatus("synced");
+                    setData(localCopy.data);
+                    setStatus(draft ? "error" : "synced");
                 }
+                // Each month has its own persistent draft. Do not let a pending
+                // request from the previously selected month be sent to this one.
+                pendingSave.current = draft && draft.data ? draft.data : null;
                 setUrlError("");
-                if (!cached || !cached.data) setStatus("loading");
+                if (!localCopy || !localCopy.data) setStatus("loading");
                 // 2) Then fetch fresh data in the background and update
                 try {
                     const json = await fetchMonth(baseUrl, mk);
-                    skipNextSave.current = true;
-                    setData(json.data);
                     setMonths(json.months || []);
-                    try { localStorage.setItem(cacheKey, JSON.stringify({ data: json.data, at: Date.now() })); } catch (e) {}
-                    setStatus("synced");
-                    setUrlError("");
+                    if (draft && draft.data) {
+                        setStatus("error");
+                        setUrlError("Offline changes are safely saved in this browser and will sync automatically.");
+                    } else {
+                        skipNextSave.current = true;
+                        setData(json.data);
+                        try { localStorage.setItem(cacheKey, JSON.stringify({ data: json.data, at: Date.now() })); } catch (e) {}
+                        setStatus(draft ? "error" : "synced");
+                        setUrlError("");
+                    }
                 } catch (err) {
                     console.error("Load error:", err);
-                    if (cached && cached.data) {
+                    if (localCopy && localCopy.data) {
                         // Keep the saved copy on screen; changes will sync when online
                         setStatus("synced");
                         setUrlError("Offline — showing the last saved copy. Changes will sync when the network is back.");
@@ -774,13 +812,19 @@
                     return;
                 }
 
+                // Save locally before waiting for the debounced network request.
+                // This is deliberately synchronous so a page reload while offline
+                // cannot lose the user's latest edit.
+                saveLocalDraft(monthKey, data);
+                pendingSave.current = data;
                 setStatus("syncing");
                 if (saveTimer.current) clearTimeout(saveTimer.current);
 
                 saveTimer.current = setTimeout(async () => {
                     try {
                         const json = await saveMonth(url, monthKey, data);
-                        pendingSave.current = null;
+                        if (JSON.stringify(pendingSave.current) === JSON.stringify(data)) pendingSave.current = null;
+                        clearDraftIfUnchanged(monthKey, data);
                         setMonths((prev) => (json.months && json.months.length ? json.months : prev));
                         try { localStorage.setItem("ledger-cache-v1-" + monthKey, JSON.stringify({ data, at: Date.now() })); } catch (e) {}
                         setStatus("synced");
@@ -808,7 +852,8 @@
                     setStatus("syncing");
                     try {
                         const json = await saveMonth(url, monthKey, pending);
-                        pendingSave.current = null;
+                        if (JSON.stringify(pendingSave.current) === JSON.stringify(pending)) pendingSave.current = null;
+                        clearDraftIfUnchanged(monthKey, pending);
                         setMonths((prev) => (json.months && json.months.length ? json.months : prev));
                         try { localStorage.setItem("ledger-cache-v1-" + monthKey, JSON.stringify({ data: pending, at: Date.now() })); } catch (e) {}
                         setStatus("synced");
